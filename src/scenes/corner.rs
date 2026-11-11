@@ -27,24 +27,10 @@ const COLORS: [Rgb; 8] = [
     [255, 125, 205],
 ];
 
-/// 高潮大字「嘎！！」：手画点阵（16×14 / 2×14），画在像素层、按调色板彩虹上色
-const GA: [&str; 14] = [
-    "......##########",
-    "...........#....",
-    "####....#######.",
-    "#..#....#.....#.",
-    "#..#....#######.",
-    "#..#....#.....#.",
-    "#..#....#######.",
-    "####.....#....#.",
-    "......##########",
-    "..........#...#.",
-    "...........#.#..",
-    "............#...",
-    "...........#.#.#",
-    ".........##...##",
+/// 高潮大字「！！！」：粗感叹号点阵（4×14），画在像素层、按调色板彩虹上色
+const BANG: [&str; 14] = [
+    "####", "####", "####", "####", "####", "####", "####", ".##.", ".##.", ".##.", "....", "####", "####", "####",
 ];
-const BANG: [&str; 14] = ["##", "##", "##", "##", "##", "##", "##", "##", "##", "##", "..", "##", "##", ".."];
 
 const MISS: [&str; 3] = ["差一点！", "啊啊啊就差一格！", "又差一点！！"];
 const SIGH: [&str; 3] = ["唉——", "（失望地趴回去）", "这都能不进？"];
@@ -515,13 +501,13 @@ impl Corner {
         }
     }
 
-    /// 高潮大字「嘎！！」：从上面掉下来定住，彩虹点阵 + 深色描边。返回大字底部所在的字符行
+    /// 高潮大字「！！！」：从上面掉下来定住，彩虹点阵 + 深色描边。返回大字底部所在的字符行
     fn draw_big(&self, app: &mut App, a: f32) -> Option<i32> {
         let (w, hp) = (app.scr.w as i32, app.hp());
         if app.scr.h < 16 {
             return None;
         }
-        let units = 16 + 2 + 2 + 2 + 2 + 2; // 嘎 + 空 + ！ + 空 + ！
+        let units = 4 + 3 + 4 + 3 + 4; // ！ 空 ！ 空 ！
         let s = ((w as f32 * 0.42 / units as f32).min(hp * 0.36 / 14.0) as i32).clamp(1, 3);
         let gw = units * s;
         let gh = 14 * s;
@@ -543,9 +529,9 @@ impl Corner {
                 }
             }
         };
-        put(&GA, 0, &mut buf);
-        put(&BANG, 18 * s, &mut buf);
-        put(&BANG, 22 * s, &mut buf);
+        put(&BANG, 0, &mut buf);
+        put(&BANG, 7 * s, &mut buf);
+        put(&BANG, 14 * s, &mut buf);
         let on = |x: i32, y: i32| x >= 0 && y >= 0 && x < gw && y < gh && buf[(y * gw + x) as usize];
         for y in -1..=gh {
             for x in -1..=gw {
@@ -860,30 +846,32 @@ impl Interlude for Corner {
         }
         let a = t - T_HIT;
         if a > 0.12 && a < 2.5 {
-            // 横幅：彩虹字（调色板色，流动不花带宽）
+            // 横幅：三行高的彩虹底色块，深色反白字（底色是调色板色，流动不花带宽）
             let text = "正 中 角 落 ！";
             let tw = str_w(text) as i32;
+            let pad = if w >= 150 { 10 } else if w >= 60 { 6 } else { 3 };
             let y0 = match self.big_bottom {
-                Some(b) => (b + 2).min(h - 3),
-                None => (h / 2 - 3).max(1),
+                Some(b) => (b + 3).min(h - 4),
+                None => (h / 2 - 2).max(1),
             };
             let x0 = (w - tw) / 2;
-            for x in x0 - 3..x0 + tw + 3 {
-                let c = rb(Band::Text, x as f32 * 2.0, 0.0);
-                app.scr.put_c(x, y0 - 1, '━', c, Some(Col::T(BLACK)));
-                app.scr.put_c(x, y0 + 1, '━', c, Some(Col::T(BLACK)));
-                app.scr.put_c(x, y0, ' ', c, Some(Col::T(BLACK)));
+            for y in y0 - 1..=y0 + 1 {
+                for x in x0 - pad..x0 + tw + pad {
+                    let c = rb(Band::Text, x as f32 * 1.6, y as f32 * 0.6);
+                    app.scr.put_c(x, y, ' ', c, Some(c));
+                }
             }
             let mut x = x0;
             for ch in text.chars() {
                 if ch != ' ' {
-                    app.scr.put_c(x, y0, ch, rb(Band::Text, x as f32 * 2.0, 3.0), Some(Col::T(BLACK)));
+                    let bg = rb(Band::Text, x as f32 * 1.6, y0 as f32 * 0.6);
+                    app.scr.put_c(x, y0, ch, Col::T([12, 10, 20]), Some(bg));
                 }
                 x += char_w(ch) as i32;
             }
             if a > 0.5 {
                 let sub = "（这是历史性的一刻）";
-                app.scr.text((w - str_w(sub) as i32) / 2, y0 + 2, sub, [150, 150, 160], Some(BLACK));
+                app.scr.text((w - str_w(sub) as i32) / 2, y0 + 3, sub, [190, 190, 200], Some(BLACK));
             }
         }
         if a > 1.9 && a < 3.3 {
