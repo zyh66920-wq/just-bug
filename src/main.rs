@@ -232,6 +232,10 @@ fn resolve(c: Col, t: f32) -> Rgb {
 fn lolcat(x: f32, y: f32, t: f32) -> Rgb {
     resolve(rb(Band::Text, x, y), t)
 }
+fn gray_of(a: Rgb) -> Rgb {
+    let l = ((a[0] as f32 * 0.3 + a[1] as f32 * 0.55 + a[2] as f32 * 0.15) * 0.8) as u8;
+    [l, l, l]
+}
 
 // ───────────────────────── 屏幕缓冲 ─────────────────────────
 fn char_w(c: char) -> usize {
@@ -699,6 +703,8 @@ struct App {
     title_cool: f32,
     last_funny: usize,
     line_no: u64,
+    /// 满效果（默认）：60 帧、鸭鸭/光晕/飞字逐帧真彩色。电脑或终端跟不上时主循环自动关掉，换省流量画法
+    pub hi: bool,
     last_top: Option<u64>,
 }
 
@@ -744,6 +750,7 @@ impl App {
             title_cool: 0.0,
             last_funny: usize::MAX,
             line_no: 0,
+            hi: true,
             last_top: None,
         };
         a.set_title("C:\\Windows\\system32\\cmd.exe");
@@ -1432,7 +1439,7 @@ impl App {
                 if is_dim(c) { dims += 1 } else { main += 1 }
             }
         }
-        let keep_dim = (PARTICLE_CAP.saturating_sub(main) as f32 / dims.max(1) as f32).min(1.0);
+        let keep_dim = if self.hi { 1.0 } else { (PARTICLE_CAP.saturating_sub(main) as f32 / dims.max(1) as f32).min(1.0) };
         for y in 0..self.scr.h {
             for x in 0..w {
                 let c = self.scr.cells[y * w + x];
@@ -1464,7 +1471,8 @@ impl App {
     }
 
     fn hole_radius(&self) -> f32 {
-        (self.scr.w.min(self.scr.h * 2) as f32 * 0.19).clamp(5.0, 25.0)
+        let r = (self.scr.w.min(self.scr.h * 2) as f32 * 0.19).max(5.0);
+        if self.hi { r } else { r.min(25.0) }
     }
 
     fn update_hole(&mut self, dt: f32) {
@@ -1537,6 +1545,9 @@ impl App {
     // ═════════════════════════ 绘制 ═════════════════════════
     /// 这一帧该用的帧率：黑洞几千个粒子同时在动，那几秒按 20 帧跑（电影感，终端压力减三分之一）
     fn fps_hint(&self) -> f32 {
+        if self.hi {
+            return 60.0;
+        }
         match self.phase {
             Phase::Hole => 20.0,
             Phase::Collapse if self.pt < 0.6 => 20.0,
@@ -1564,8 +1575,11 @@ impl App {
             }
             Phase::Swarm => {
                 // 只在 FATAL 砸下来那半秒震屏（震屏 = 整屏重写，很贵）
-                let sx = if self.pt > 1.6 && self.pt < 2.2 { jit(self.t, 7) } else { 0 };
-                let dim = if self.pt > 2.4 { 1.0 } else { 0.0 };
+                let (sx, dim) = if self.hi {
+                    (if self.step >= 1 { jit(self.t, 7) } else { 0 }, smooth(1.6, 3.4, self.pt) * 0.55)
+                } else {
+                    (if self.pt > 1.6 && self.pt < 2.2 { jit(self.t, 7) } else { 0 }, if self.pt > 2.4 { 1.0 } else { 0.0 })
+                };
                 if sx == 0 {
                     self.last_top = drew_logs_before;
                 }
@@ -1573,7 +1587,7 @@ impl App {
             }
             Phase::Hole => {
                 // 黑洞半径按每秒 12 步长大，和吸积盘旋转同一节拍，避免整片光晕每帧重画
-                let g = smooth(0.0, 1.8, (self.pt * 12.0).floor() / 12.0);
+                let g = smooth(0.0, 1.8, if self.hi { self.pt } else { (self.pt * 12.0).floor() / 12.0 });
                 let r = self.hole_radius() * g;
                 self.draw_hole(r, g, 1.0);
                 self.draw_particles(true);
@@ -1585,7 +1599,7 @@ impl App {
             Phase::Collapse => {
                 let pt = self.pt;
                 if pt < 0.6 {
-                    let k = ((pt * 12.0).floor() / 12.0) / 0.6;
+                    let k = if self.hi { pt } else { (pt * 12.0).floor() / 12.0 } / 0.6;
                     self.draw_hole(self.hole_radius() * (1.0 - k * k), 1.0, 1.0 + 2.5 * k);
                 }
             }
@@ -1625,6 +1639,7 @@ impl App {
         let span = (w + 2 * h) as f32;
         let t = self.t;
         let pt = self.pal_t();
+        let hi = self.hi;
         let full = self.logs.len() >= h && sweep >= 1.0 && ox == 0;
         if full {
             let top = self.logs[start].no;
@@ -1671,7 +1686,10 @@ impl App {
                         let glint = (1.0 - (sweep - edge) * 14.0).clamp(0.0, 1.0);
                         (mix(c, WHITE, glint).into(), None)
                     }
-                    _ => (rb(if tail || dim > 0.5 { Band::Dim } else { Band::Text }, lx_f, ly), None),
+                    _ => {
+                        let c = rb(if tail || (!hi && dim > 0.5) { Band::Dim } else { Band::Text }, lx_f, ly);
+                        (if hi && dim > 0.0 { Col::T(scale(resolve(c, pt), 1.0 - dim)) } else { c }, None)
+                    }
                 };
                 if tail {
                     if let Col::T(c) = fg {
@@ -1680,7 +1698,7 @@ impl App {
                 }
                 if e == 1 {
                     // 被吃掉的颜色：固定灰，不随彩虹流动（不产生额外重绘）
-                    fg = Col::T(if tail { [62, 62, 62] } else { [138, 138, 138] });
+                    fg = Col::T(if hi { gray_of(resolve(fg, pt)) } else if tail { [62, 62, 62] } else { [138, 138, 138] });
                 }
                 self.scr.put_c(x, y, ch, fg, bg);
             }
@@ -1691,7 +1709,28 @@ impl App {
         if g < 0.02 {
             return;
         }
-        // 光晕：固定暖白色，圆心对齐到整格、强度分 8 档——鸭鸭不换格子时这一大片背景一个字节都不用重写
+        if self.hi {
+            // 满效果：光晕跟着鸭鸭身下的彩虹变色，逐帧平滑
+            let (dx0, dy0) = (self.duck.x, self.duck.y);
+            let r = self.duck_half().0 * 2.6;
+            let col = mix(lolcat(dx0, dy0 / 2.0, self.pal_t()), WHITE, 0.3);
+            let (x0, x1) = ((dx0 - r) as i32, (dx0 + r) as i32);
+            let (y0, y1) = (((dy0 - r) / 2.0) as i32, ((dy0 + r) / 2.0) as i32);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let (ex, ey) = (x as f32 + 0.5 - dx0, y as f32 * 2.0 + 1.0 - dy0);
+                    let d = (ex * ex + ey * ey).sqrt() / r;
+                    if d < 1.0 {
+                        if let Some(bg) = self.scr.bg_at(x, y) {
+                            let b = resolve(*bg, 0.0);
+                            *bg = Col::T(mix(b, col, 0.32 * g * (1.0 - d).powi(2)));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        // 省流量：固定暖白色，圆心对齐到整格、强度分 8 档——鸭鸭不换格子时这一大片背景一个字节都不用重写
         let (dx0, dy0) = (self.duck.x.round(), (self.duck.y / 2.0).round() * 2.0);
         let g = (g * 8.0).round() / 8.0;
         if g <= 0.0 {
@@ -1726,6 +1765,8 @@ impl App {
         let oy = (d.y - hh as f32 + bob).round() as i32;
         let (gw, gh) = (18 * s + 2, 14 * s + 2);
         let mut buf: Vec<Option<Col>> = vec![None; (gw * gh) as usize];
+        let hi = self.hi;
+        let dt14 = (self.t * 14.0).floor() / 10.0;
         for (j, row) in DUCK.iter().enumerate() {
             for (i, ch) in row.chars().enumerate() {
                 if ch == '.' {
@@ -1736,16 +1777,20 @@ impl App {
                     for sx in 0..s {
                         let (px, py) = (ii as i32 * s + sx + 1, j as i32 * s + sy + 1);
                         let (wx, wy) = (ox + px, oy + py);
-                        let _ = (wx, wy);
-                        // 按鸭子身上的局部坐标取调色板色：鸭鸭移动时颜色编号不变，只换位置
+                        // 满效果：按屏幕位置取彩虹（漂动时身上流光）、上亮下深；省流量：按身上局部坐标取调色板色
                         let (lxf, lyf) = (px as f32 * 0.8 / s as f32 * 2.0, py as f32 * 0.4 / s as f32 * 2.0);
+                        let body: Option<Rgb> = hi.then(|| mix(lolcat(wx as f32 * 0.8, wy as f32 * 0.4, dt14), WHITE, 0.28 - j as f32 * 0.018));
                         let c: Col = match ch {
+                            'W' if body.is_some() => scale(body.unwrap(), 0.72).into(),
                             'W' => rb(Band::Dim, lxf, lyf),
                             'B' => [255, 160, 40].into(),
                             'b' => [215, 95, 25].into(),
                             'e' if d.asleep => [60, 45, 70].into(),
                             'e' => [12, 10, 20].into(),
-                            _ => rb(Band::Duck, lxf, lyf),
+                            _ => match body {
+                                Some(b) => b.into(),
+                                None => rb(Band::Duck, lxf, lyf),
+                            },
                         };
                         buf[(py * gw + px) as usize] = Some(c);
                     }
@@ -1867,7 +1912,7 @@ impl App {
         const RAMP: &[char] = &[' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
         let (cx, cy) = self.center();
         // 吸积盘按每秒 12 步旋转（不必每帧重画整片光晕），并且只扫黑洞外接框
-        let t = (self.t * 12.0).floor() / 12.0;
+        let t = if self.hi { self.t } else { (self.t * 12.0).floor() / 12.0 };
         let reach = r * 4.2;
         let (x0, x1) = ((cx - reach).max(0.0) as usize, ((cx + reach) as usize + 1).min(self.scr.w));
         let (y0, y1) = (((cy - reach) / 2.0).max(0.0) as usize, (((cy + reach) / 2.0) as usize + 1).min(self.scr.h));
@@ -1928,7 +1973,11 @@ impl App {
             let d = (dx * dx + dy * dy).sqrt();
             // 粒子沿用原来那个字的调色板编号：大爆炸归位时和日志颜色严丝合缝，也不用每帧换色
             let mut col = p.col;
-            if !in_hole && p.gray {
+            if self.hi {
+                // 满效果：粒子按飞到的位置实时取彩虹色，飞起来是流光
+                let c = lolcat(p.x, p.y / 2.0, pt);
+                col = Col::T(if p.gray { gray_of(c) } else { c });
+            } else if !in_hole && p.gray {
                 col = lolcat(p.hx, p.hy / 2.0, pt).into();
             }
             let mut ch = p.ch;
@@ -1938,7 +1987,7 @@ impl App {
                 }
                 let near = 1.0 - smooth(r_hole * 1.2, r_hole * 4.0, d);
                 if near > 0.05 {
-                    let k = (near * 6.0).round() / 6.0;
+                    let k = if self.hi { near } else { (near * 6.0).round() / 6.0 };
                     col = mix(resolve(col, pt), heat(0.6 + 0.4 * k), k * 0.8).into();
                 }
                 let sp = (p.vx * p.vx + p.vy * p.vy).sqrt();
@@ -1977,7 +2026,8 @@ impl App {
         let pt = self.pt;
         if pt < 0.5 {
             // 白闪分 4 档递减：看起来一样是一闪，但整屏只重写 4 次而不是 15 次
-            let f = (1.0 - ((pt / 0.5) * 4.0).floor() / 4.0).powi(2);
+            let q = if self.hi { pt / 0.5 } else { ((pt / 0.5) * 4.0).floor() / 4.0 };
+            let f = (1.0 - q).powi(2);
             for c in self.scr.cells.iter_mut() {
                 c.bg = Col::T(mix(resolve(c.bg, 0.0), WHITE, f));
                 c.fg = Col::T(mix(resolve(c.fg, 0.0), WHITE, f * 0.6));
@@ -2131,7 +2181,8 @@ fn dump(args: &[String]) {
     let dt = 1.0 / 60.0;
     if path == "bench" {
         // 按真实帧率模拟：统计往终端写的字节（每秒平均 / 最忙的一秒）和自身计算耗时
-        let fps: f32 = get("--fps").and_then(|s| s.parse().ok()).unwrap_or(30.0);
+        let fps: f32 = get("--fps").and_then(|s| s.parse().ok()).unwrap_or(60.0);
+        app.hi = !args.iter().any(|a| a == "--lite");
         let secs: f32 = get("--secs").and_then(|s| s.parse().ok()).unwrap_or(150.0);
         let mut out = String::new();
         let mut costs: Vec<f64> = Vec::new();
@@ -2266,10 +2317,14 @@ fn main() -> std::io::Result<()> {
     let modern = std::env::var_os("WT_SESSION").is_some();
     app.scr.pal = modern;
     let mut out = String::with_capacity(1 << 20);
-    let fast = Duration::from_micros(33_333); // 屏保标准 30 帧
-    let slow = Duration::from_millis(50); // 终端跟不上时降到 20 帧
-    let mut frame = if modern { fast } else { slow };
-    let mut write_ema = 0.0f32; // 写终端耗时的滑动平均（毫秒），反映终端消化得过来没有
+    // 画质档位：默认满效果；一帧（计算+写终端）持续吃掉大半预算就降一档，长时间很闲再升回去。
+    // 同一档被降下来两次就不再升回，避免每轮黑洞来回切换。老式 cmd 窗口直接从省流量档开始。
+    const LEVELS: [(bool, u64); 4] = [(true, 16_667), (true, 33_333), (false, 33_333), (false, 50_000)];
+    let mut level = if modern { 0 } else { 2 };
+    let mut banned = [false; 4];
+    let mut demoted = [0u8; 4];
+    let mut load_ema = 0.0f32; // 每帧实际耗时占预算的比例（滑动平均）
+    let (mut hot, mut cool) = (0.0f32, 0.0f32);
     let mut last_pal = f32::NAN;
     let mut last = Instant::now();
 
@@ -2286,6 +2341,9 @@ fn main() -> std::io::Result<()> {
         let dt = (now - last).as_secs_f32().min(0.1);
         last = now;
 
+        let (hi, us) = LEVELS[level];
+        app.hi = hi;
+        let frame = Duration::from_micros(us);
         app.update(dt);
         app.draw();
         out.clear();
@@ -2298,23 +2356,31 @@ fn main() -> std::io::Result<()> {
             palette_osc(&mut out, last_pal);
         }
         app.scr.flush(&mut out);
-        let t0 = Instant::now();
         if out.len() > 16 {
             let mut lock = stdout.lock();
             lock.write_all(out.as_bytes())?;
             lock.flush()?;
         }
-        let wms = t0.elapsed().as_secs_f32() * 1000.0;
-        write_ema = write_ema * 0.9 + wms * 0.1;
-        if modern {
-            if frame == fast && write_ema > 18.0 {
-                frame = slow;
-            } else if frame == slow && write_ema < 6.0 {
-                frame = fast;
-            }
-        }
         let budget = frame.max(Duration::from_secs_f32(1.0 / app.fps_hint()));
         let spent = now.elapsed();
+        let load = spent.as_secs_f32() / budget.as_secs_f32();
+        load_ema = load_ema * 0.92 + load * 0.08;
+        let fdt = budget.as_secs_f32().max(spent.as_secs_f32());
+        hot = if load_ema > 0.75 { hot + fdt } else { 0.0 };
+        // 升档要按上一档的预算折算：30 帧时只用了 25%，换成 60 帧就是 50%
+        let up_load = if level > 0 { load_ema * us as f32 / LEVELS[level - 1].1 as f32 } else { 1.0 };
+        cool = if up_load < 0.35 { cool + fdt } else { 0.0 };
+        if hot > 1.5 && level < LEVELS.len() - 1 {
+            demoted[level] += 1;
+            if demoted[level] >= 2 {
+                banned[level] = true;
+            }
+            level += 1;
+            (hot, cool, load_ema) = (0.0, 0.0, 0.5);
+        } else if cool > 20.0 && level > 0 && !banned[level - 1] {
+            level -= 1;
+            (hot, cool, load_ema) = (0.0, 0.0, 0.5);
+        }
         if spent < budget {
             std::thread::sleep(budget - spent);
         }
