@@ -100,13 +100,14 @@ impl Chain {
         let cx = (w / 2.0).floor();
         let cy = (hp / 2.0).floor();
         let (dh, mo) = if small { ((5.0, 3.5), (4.5, -2.0)) } else { ((9.0 * ks, 7.0 * ks), (7.5 * ks, -2.5 * ks)) };
-        let ry_max = (cy - 2.0 - rf).max(4.0);
+        let top = if small { 4.0 } else { 2.0 };
+        let ry_max = (cy - top - rf).max(4.0);
         let rx_max = (cx - 2.0 - rf).max(4.0);
         let ex = (rx_max / ry_max).clamp(1.0, 2.2);
         let mut r_in = (dh.1 + rf + 2.0).min(ry_max * 0.8);
         r_in = r_in.max(((dh.0 + rf + 2.0) / ex).min(ry_max * 0.8));
         let pitch = d + if ks >= 2.0 { 5.0 } else { 3.0 };
-        let turns = ((ry_max - r_in) / pitch).clamp(0.75, 3.0);
+        let turns = ((ry_max - r_in) / pitch).clamp(0.75, 2.0);
         let th_out = turns * TAU;
         let b = (ry_max - r_in).max(0.0) / th_out;
 
@@ -159,7 +160,7 @@ impl Chain {
         let mut k = 0usize;
         for (i, &(x, y)) in trk.iter().enumerate() {
             let (gx, gy) = (x.round() as i32, (y / 2.0).floor() as i32);
-            if gx < 0 || gy < 0 || gx >= sw || gy >= sh {
+            if gx < 0 || gy < 1 || gx >= sw || gy >= sh {
                 continue;
             }
             if cells.last().map_or(false, |c| c.0 == gx && c.1 == gy) {
@@ -653,16 +654,6 @@ impl Interlude for Chain {
             app.scr.put_c(x, y, ch, c, None);
         }
 
-        // 鸭鸭
-        if t >= T_DUCK && out < 0.12 {
-            if self.small {
-                mini_duck(app, app.duck.x, app.duck.y, app.duck.right, 1);
-            } else {
-                app.draw_glow(app.duck.glow * smooth(T_DUCK, T_DUCK + 0.6, t));
-                app.draw_duck(None);
-            }
-        }
-
         // 珠子
         let hi = app.hi;
         for i in 0..self.beads.len() {
@@ -674,8 +665,21 @@ impl Interlude for Chain {
             if hidden(app, x, y) {
                 continue;
             }
+            if self.small && y - ((self.r + 1) as f32) < 2.0 {
+                continue;
+            }
             let wig = hi && ((t * 3.0 + b.id as f32 * 0.37) as i32) % 4 == 0;
             Self::draw_bead(app, x, y, COLORS[b.c as usize], self.r, b.g, wig);
+        }
+
+        // 鸭鸭（画在珠子之后，珠子不会盖住它）
+        if t >= T_DUCK && out < 0.12 {
+            if self.small {
+                mini_duck(app, app.duck.x, app.duck.y, app.duck.right, 1);
+            } else {
+                app.draw_glow(app.duck.glow * smooth(T_DUCK, T_DUCK + 0.6, t));
+                app.draw_duck(None);
+            }
         }
 
         // 嘴边含着的下一发 / 飞行中的彩虹泡

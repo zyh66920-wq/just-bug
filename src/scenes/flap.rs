@@ -67,6 +67,7 @@ pub struct Flap {
     seed: u64,
     sw: usize,
     sh: usize,
+    small: bool,
     k: i32,
     pw: i32,
     dh: f32,
@@ -156,6 +157,7 @@ impl Flap {
             seed,
             sw: 0,
             sh: 0,
+            small: false,
             k: 1,
             pw: 2,
             dh: 9.0,
@@ -223,6 +225,8 @@ impl Flap {
         self.sh = h;
         let wf = w as f32;
         let hp = h as f32 * 2.0;
+        let small = h < 20;
+        self.small = small;
         let k = app.s();
         self.k = k;
         self.pw = if w >= 160 { 4 } else if w >= 70 { 3 } else { 2 };
@@ -230,12 +234,12 @@ impl Flap {
         self.dh = (7 * k + 2) as f32;
         self.half = (5 * k + 1) as f32;
         self.dx = (wf / 3.0).round();
-        let sp = (wf * 0.2).max(2.6 * (10 * k + 2) as f32 + pw as f32);
+        let sp = (wf * 0.2).max((if small { 1.9 } else { 2.6 }) * (10 * k + 2) as f32 + pw as f32);
         let spacing = if app.hi { sp } else { sp * 1.5 };
         self.v0 = sp / 1.6;
         self.v1 = sp / 1.15;
-        self.g = 18.0 * self.dh;
-        self.fv = (2.0 * self.g * 0.55 * self.dh).sqrt();
+        self.g = (if small { 13.0 } else { 18.0 }) * self.dh;
+        self.fv = (2.0 * self.g * (if small { 0.34 } else { 0.55 }) * self.dh).sqrt();
         self.tab.clear();
         let (mut s, mut t) = (0.0, 0.0);
         while t <= T_END + 0.3 {
@@ -258,7 +262,9 @@ impl Flap {
         }
         let mut rng = Rng(self.seed);
         let dh = self.dh;
-        let (lo, hi) = (2.0 + 1.3 * dh, hp - 1.3 * dh);
+        let (gh_norm, gh_close) = if small { (10.0, 8.0) } else { (2.4 * dh, 1.75 * dh) };
+        let hmax = gh_norm / 2.0;
+        let (lo, hi) = (3.0 + hmax, hp - 3.0 - hmax);
         let (lo, hi) = if lo < hi { (lo, hi) } else { (hp * 0.5, hp * 0.5 + 0.001) };
         let mut xs = Vec::new();
         let mut x = (wf * 0.45).max(self.dx + self.half + 8.0).round();
@@ -275,10 +281,16 @@ impl Flap {
         for (i, &px) in xs.iter().enumerate() {
             let last = i == n - 1;
             if i > 0 && !last {
-                gc = (gc + rng.range(-1.1, 1.1) * dh).clamp(lo, hi);
+                let amp = if small { 0.5 } else { 1.1 };
+                gc = (gc + rng.range(-amp, amp) * dh).clamp(lo, hi);
             }
             let close = !last && (i == 2 || i == 4);
-            let gh = if last { 0.45 * dh } else if close { 1.75 * dh } else { 2.4 * dh };
+            let gh = if last { 0.45 * dh } else if close { gh_close } else { gh_norm };
+            let hg = gh / 2.0;
+            let (plo, phi) = (3.0 + hg, hp - 3.0 - hg);
+            if plo < phi {
+                gc = gc.clamp(plo, phi);
+            }
             let from_snap = snap_ok && px >= 0.0 && px as usize + pw as usize <= w;
             let mut cells = vec![None; pw as usize * h];
             for c in 0..pw as usize {
@@ -319,7 +331,8 @@ impl Flap {
         let edge = self.dx - self.half - 1.0;
         for p in &self.pillars {
             if p.x - s + self.pw as f32 >= edge {
-                return p.gc + 0.25 * self.dh;
+                let bias = if self.small { 0.05 } else { 0.25 };
+                return p.gc + bias * self.dh;
             }
         }
         self.sh as f32
