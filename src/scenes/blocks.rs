@@ -1,19 +1,29 @@
-﻿//! 鎻掓洸锛氭暣鐞?bug鈥斺€斿彧鍊熴€屽潡浠庝笂鏂硅惤涓嬨€佸彲鏃嬭浆骞崇Щ銆佹嫾婊′竴琛屽氨娑堟帀銆嶇殑閫氱敤鐜╂硶銆?//! 鍦哄湴鏄暣涓粓绔殑瀹藉害锛堝彸杈圭暀缁欐寚鎸ョ殑楦腑锛夛紝钀戒笅鏉ョ殑鏄?Bug 鍗锋垚鐨勬€潡锛?/5/6 鏍奸殢鏈鸿繛鎴愮殑涓嶈鍒欏鑱斿潡锛?//! 椋炶浘榛戠櫧鐏帮紝鏍煎瓙閲屾槸 卸 鍜?}{ 灏忕繀鑶€锛涗竴鏍?= 2 鍒?脳 1 琛屻€傚ソ鍑犲潡鍚屾椂鍦ㄤ笉鍚岀殑銆岃溅閬撱€嶉噷钀斤紝AI 鎸戝潡鎸戣惤鐐广€?//! 鎷兼弧涓€琛岋細闂櫧 鈫?鍙樻垚涓€琛屽僵铏规棩蹇?鈫?寰€涓婇鍥炴棩蹇楁祦銆?//! 缁撳熬锛氫粠澶╀笂鎺変笅涓€鍧楀法澶х殑楦腑褰㈢姸鐨勫潡锛屽畠鐨勮倸鐨簳涓嬫濂芥槸 bug 鍫嗙殑鍙嶉潰鈥斺€旇繛 bug 鍫嗘繁澶勭殑绌烘礊閮藉～涓婁簡锛?//! 涓€娆℃秷鎺夋暣鍫嗭紝婊″睆褰╄櫣瀛楁憾瑙ｅ洖鏃ュ織锛宐ug 浠鍥為腑楦韩杈广€?//!
-//! 鎬ц兘锛氳儗鏅槸鍘嬫殫鐨勯潤鎬佹棩蹇楋紱姣忓抚鍙樼殑鍙湁钀界潃鐨勫嚑鍧椼€佹鍦ㄩ棯/椋炵殑鍑犺銆傜粓灞€婧惰В姣忔牸鍙彉涓€娆°€?use super::*;
+//! 插曲：整理 bug——只借「块从上方落下、可旋转平移、拼满一行就消掉」的通用玩法。
+//! 场地是整个终端的宽度（右边留给指挥的鸭子），落下来的是 Bug 卷成的怪块：
+//! 3/5/6 格随机连成的不规则多联块。
+//! 飞蛾黑白灰，格子里是 卸 和 }{ 小翅膀；一格 = 2 列 × 1 行。好几块同时在不同的「车道」里落，AI 挑块挑落点。
+//! 拼满一行：闪白 → 变成一行彩虹日志 → 往上飞回日志流。
+//! 结尾：从天上掉下一块巨大的鸭子形状的块，它的肚子底下正好是 bug 堆的反面——连 bug 堆深处的空洞都填上了。
+//! 一次消掉整堆，满屏彩虹字溶解回日志，bug 们飞回鸭子身边。
+//!
+//! 性能：背景是压暗的静态日志；每帧变的只有落着的几块、正在闪/飞的几行。终局溶解每格只变一次。
+use super::*;
 
-const FY0: i32 = 1; // 鍦哄湴浠庣 1 琛屽紑濮嬶紙绗?0 琛屾槸鏍囩锛?const T_PLAY: f32 = 1.4;
+const FY0: i32 = 1; // 场地从第 1 行开始（第 0 行是标签）
+const T_PLAY: f32 = 1.4;
 const T_STOP: f32 = 14.6;
 const FLASH: f32 = 0.36;
-const D_WAIT: f32 = 0.35; // 楦腑鍧楀嚭鐜板墠鐨勫仠椤?const D_FALL: f32 = 0.8;
+const D_WAIT: f32 = 0.35; // 鸭子块出现前的停顿
+const D_FALL: f32 = 0.8;
 const B_END: f32 = 2.75;
 const O_END: f32 = 0.8;
 const ORANGE: Rgb = [255, 160, 40];
 
-/// 椋炶浘涓夌鐏帮細(搴曡壊, 鑺辩汗鑹?
+/// 飞蛾三种灰：(底色, 花纹色)
 const SHADES: [(Rgb, Rgb); 3] = [([196, 196, 204], [84, 82, 98]), ([124, 122, 136], [34, 32, 44]), ([48, 46, 58], [162, 160, 176])];
-const GLYPH: [(char, char); 4] = [('卸', ' '), (' ', '卸'), ('}', '{'), ('卸', '卸')];
+const GLYPH: [(char, char); 4] = [('ж', ' '), (' ', 'ж'), ('}', '{'), ('ж', 'ж')];
 
-const CHAT: [&str; 6] = ["寰€宸︹€︹€﹀啀宸︿竴鐐?, "杞竴涓嬶紒杞紒", "鍒暀娲炲晩", "杩欏潡闀垮緱鍍忔垜", "閭ｈ灏卞樊涓€鏍?, "绋充綇锛岃兘娑?];
+const CHAT: [&str; 6] = ["往左——再左一点", "转一下！转！", "别留洞啊", "这块长得像我", "那行就差一格", "稳住，能消"];
 const BOOM_TXT: &[u8] = b"quack(); fix(bug); sort(logs); gc(); ";
 
 #[derive(PartialEq, Clone, Copy)]
@@ -48,6 +58,7 @@ struct Fall {
     iy: i32,
     tr: usize,
     tx: i32,
+    ly: i32,
     shade: u8,
     glyph: Vec<u8>,
     acc: f32,
@@ -103,6 +114,7 @@ pub struct Blocks {
     chat: Vec<&'static str>,
     chat_i: usize,
     first_clear: bool,
+    say: Option<(String, f32)>,
 }
 
 fn norm(c: &mut [(i32, i32)]) {
@@ -114,7 +126,7 @@ fn norm(c: &mut [(i32, i32)]) {
     }
 }
 
-/// 闅忔満闀夸竴涓?n 鏍肩殑杩為€氬舰鐘讹紙涓嶅湪浠讳綍銆屾爣鍑嗗舰鐘惰〃銆嶉噷鎸戯紝绾殢鏈虹敓闀匡級
+/// 随机长一个 n 格的连通形状（不在任何「标准形状表」里挑，纯随机生长）
 fn grow(rng: &mut Rng, n: usize) -> Vec<(i32, i32)> {
     let mut c = vec![(0, 0)];
     let mut guard = 0;
@@ -173,7 +185,7 @@ fn dim_logs(app: &mut App, tab: &[Rgb], lo: f32, hi: f32) {
     }
 }
 
-/// 褰╄櫣瀛楋紙璋冭壊鏉胯壊锛岀粓绔嚜宸辨祦鍔級锛岄粦搴曪紱瓒呰繃 xmax 灏卞仠
+/// 彩虹字（调色板色，终端自己流动），黑底；超过 xmax 就停
 fn rtext(app: &mut App, x: i32, y: i32, s: &str, xmax: i32) -> i32 {
     let mut x = x;
     for ch in s.chars() {
@@ -199,7 +211,7 @@ impl Blocks {
         let fh = (h - FY0).max(4);
         let mut rng = Rng(app.rng.next() | 1);
 
-        // 杞﹂亾锛氭瘡鏉″ぇ绾?16 鏍煎锛屽嚑鍧楀悓鏃惰惤
+        // 车道：每条大约 16 格宽，几块同时落
         let lw = if small { 7 } else { 9 };
         let mut nl = (fw / lw).max(1);
         if !app.hi {
@@ -209,7 +221,8 @@ impl Blocks {
             .map(|i| Lane { x0: fw * i / nl, x1: fw * (i + 1) / nl, cd: T_PLAY + (i % 5) as f32 * 0.12 + rng.range(0.0, 0.2) })
             .collect();
 
-        // 寮€鍦虹殑 bug 鍫嗭細涓婇潰鍑犺鏈夎兘濉殑鍧戯紝涓嬮潰姣忚閮借棌鐫€琚洊浣忕殑绌烘礊锛圓I 娑堜笉鎺夛紝鐣欑粰缁撳熬锛?        let jh = ((fh as f32 * if small { 0.3 } else { 0.36 }) as i32).max(2);
+        // 开场的 bug 堆：上面几行有能填的坑，下面每行都藏着被盖住的空洞（AI 消不掉，留给结尾）
+        let jh = ((fh as f32 * if small { 0.3 } else { 0.36 }) as i32).max(2);
         let bd = (jh / 2).clamp(1, 5);
         let mut depth = vec![0i32; fw as usize];
         let mut c = 0;
@@ -265,8 +278,8 @@ impl Blocks {
         app.duck.ty = duck_at.1;
         app.duck.right = false;
         app.duck.bubble = None;
-        app.push(log_line("INFO", "bug::sort", "鏁寸悊 bug.exe 宸插姞杞斤細鑷姩鎽嗘斁 AI v0.3锛堜細鏃嬭浆锛屼笉浼氱疮锛?, Kind::Info));
-        app.set_title("楦腑.exe 鈥?鏁寸悊 bug");
+        app.push(log_line("INFO", "bug::sort", "整理 bug.exe 已加载：自动摆放 AI v0.3（会旋转，不会累）", Kind::Info));
+        app.set_title("鸭子.exe — 整理 bug");
 
         let mut b = Blocks {
             t: 0.0,
@@ -303,9 +316,19 @@ impl Blocks {
             chat,
             chat_i: 0,
             first_clear: false,
+            say: None,
         };
         b.recompute();
         b
+    }
+
+    /// 小屏自己画气泡：App 的气泡按大鸭子定位，40x12 上会落到标题那一行
+    fn say(&mut self, app: &mut App, text: &str, dur: f32) {
+        if self.small {
+            self.say = Some((text.to_string(), self.t + dur));
+        } else {
+            app.quack(text, dur);
+        }
     }
 
     fn recompute(&mut self) {
@@ -326,7 +349,7 @@ impl Blocks {
         })
     }
 
-    /// 浠庤溅閬撻噷鏈€浣庣殑琛ㄩ潰鏍煎瓙寮€濮嬶紝娌胯〃闈㈤暱鍑?n 鏍硷細姣忔牸瑕佷箞姝ｅ帇鍦ㄥ爢涓婏紝瑕佷箞鍘嬪湪鏈潡涓婏紙钀戒笅鍘讳弗涓濆悎缂濓級
+    /// 从车道里最低的表面格子开始，沿表面长出 n 格：每格要么正压在堆上，要么压在本块上（落下去严丝合缝）
     fn fitted(&mut self, l0: i32, l1: i32, n: usize, lowest: bool) -> Option<Vec<(i32, i32)>> {
         let mx = (l0..l1).map(|c| self.top[c as usize]).max()?;
         let pool: Vec<i32> = (l0..l1).filter(|&c| if lowest { self.top[c as usize] == mx } else { self.top[c as usize] >= mx - 1 }).collect();
@@ -355,7 +378,8 @@ impl Blocks {
             if opts.is_empty() {
                 break;
             }
-            // 鍋忕埍寰€浣庡銆佸線鏃佽竟闀匡紙濉钩锛夛紝鍋跺皵寰€涓婂啋涓€鏍?            opts.sort_by_key(|p| -p.1);
+            // 偏爱往低处、往旁边长（填平），偶尔往上冒一格
+            opts.sort_by_key(|p| -p.1);
             let pick = if self.rng.f() < 0.75 { self.rng.int(opts.len().min(2)) } else { self.rng.int(opts.len()) };
             set.push(opts[pick]);
         }
@@ -366,12 +390,13 @@ impl Blocks {
         Some(set)
     }
 
-    /// AI锛氬嚑绉嶅€欓€夋€潡 脳 姣忎釜鏈濆悜 脳 姣忎釜钀界偣锛屾寜銆屾秷琛屻€佸～婊″害銆佹柊绌烘礊銆侀珮搴︺€嶆墦鍒?    fn plan(&mut self, lane: usize) -> Option<Fall> {
+    /// AI：几种候选怪块 × 每个朝向 × 每个落点，按「消行、填满度、新空洞、高度」打分
+    fn plan(&mut self, lane: usize) -> Option<Fall> {
         let (l0, l1) = (self.lanes[lane].x0, self.lanes[lane].x1);
         let fw = self.fw as f32;
-        let mut best: Option<(f32, usize, usize, i32)> = None;
+        let mut best: Option<(f32, usize, usize, i32, i32)> = None;
         let mut cands = Vec::new();
-        // 涓€鍗婂€欓€夋槸 bug 浠収鐫€鍧戙€屽嵎銆嶅嚭鏉ョ殑褰㈢姸锛堣创鐫€琛ㄩ潰闀匡紝涓嶇暀娲烇級锛屼竴鍗婄函闅忔満
+        // 一半候选是 bug 们照着坑「卷」出来的形状（贴着表面长，不留洞），一半纯随机
         for k in 0..4 {
             let n = [3usize, 5, 6][self.rng.int(3)];
             let shape = if k < 2 { self.fitted(l0, l1, n, k == 0) } else { None };
@@ -416,12 +441,12 @@ impl Blocks {
                     let topy = y + cells.iter().map(|p| p.1).min().unwrap_or(0);
                     s += lines as f32 * 12.0 - holes as f32 * 4.5 - (self.fh - topy) as f32 * 0.35 + self.rng.f() * 0.4;
                     if best.map_or(true, |b| s > b.0) {
-                        best = Some((s, si, ri, x));
+                        best = Some((s, si, ri, x, y));
                     }
                 }
             }
         }
-        let (_, si, ri, tx) = best?;
+        let (_, si, ri, tx, ly) = best?;
         let rots = cands.swap_remove(si);
         let r0 = self.rng.int(rots.len());
         let cells = &rots[r0];
@@ -439,7 +464,8 @@ impl Blocks {
             iy: -chh,
             tr: ri,
             tx,
-            shade: self.rng.int(3) as u8,
+            ly,
+            shade: self.rng.int(2) as u8,
             glyph,
             acc: 0.0,
             drop: false,
@@ -452,12 +478,12 @@ impl Blocks {
             self.msg_k += 1;
             let hex = self.rng.int(0xFFFF);
             let m = match (self.msg_k + self.rng.int(3) as u32) % 6 {
-                0 => format!("[INFO] bug::gc 宸插綊妗?bug#0x{:04X}锛屾帓寰楁暣鏁撮綈榻?, hex),
-                1 => "[DEBUG] duck::lint 杩欎竴琛屾病姣涚梾".to_string(),
-                2 => format!("[INFO] log::sink 椋炶浘 脳{} 宸插啓鍥?stdout", 6 + hex % 30),
-                3 => format!("[OK] bug#0x{:04X} 宸叉寜鏃堕棿鎴虫帓搴?, hex),
-                4 => "[WARN] bug::gc 鏈夊彧 bug 鎯虫彃闃燂紝宸查┏鍥?.to_string(),
-                _ => format!("[INFO] 绗?{} 琛屾棩蹇楁暣鐞嗗畬姣?, self.n + 1),
+                0 => format!("[INFO] bug::gc 已归档 bug#0x{:04X}，排得整整齐齐", hex),
+                1 => "[DEBUG] duck::lint 这一行没毛病".to_string(),
+                2 => format!("[INFO] log::sink 飞蛾 ×{} 已写回 stdout", 6 + hex % 30),
+                3 => format!("[OK] bug#0x{:04X} 已按时间戳排序", hex),
+                4 => "[WARN] bug::gc 有只 bug 想插队，已驳回".to_string(),
+                _ => format!("[INFO] 第 {} 行日志整理完毕", self.n + 1),
             };
             s.push_str(&m);
             s.push_str("   ");
@@ -493,7 +519,7 @@ impl Blocks {
     fn build_slab(&mut self) {
         let st = self.top.iter().copied().min().unwrap_or(self.fh);
         let s = ((self.fw as f32 * 0.45 / 10.0) as i32).min(st / 7).max(1);
-        let dr0 = st - 7 * s;
+        let dr0 = (st - 7 * s).max(1);
         let dc0 = (self.fw - 10 * s) / 2;
         self.slab.clear();
         for (j, row) in MINI_DUCK.iter().enumerate() {
@@ -554,7 +580,7 @@ impl Blocks {
         self.slab.clear();
         self.recompute();
         self.n += self.slab_n.max(0) as u32;
-        // bug 浠粠婧惰В鐨勫僵铏瑰瓧閲岄鍑烘潵锛屽洖楦腑韬竟
+        // bug 们从溶解的彩虹字里飞出来，回鸭子身边
         let nf = if app.hi { 7 } else { 3 };
         for i in 0..nf {
             if cells.is_empty() {
@@ -574,16 +600,16 @@ impl Blocks {
         app.push(log_line(
             "INFO",
             "duck::gc",
-            &format!("涓€鍙腑瀛愭暣鐞嗕簡鍏ㄩ儴 bug锛歿} 琛岋紝0 warning锛岀┖娲炰篃椤烘墜濉簡", self.slab_n),
+            &format!("一只鸭子整理了全部 bug：{} 行，0 warning，空洞也顺手填了", self.slab_n),
             Kind::Fixed,
         ));
-        app.quack("鍢庯紙涓€琛屼笉鍓╋級", 1.4);
+        self.say(app, "嘎（一行不剩）", 1.4);
     }
 }
 
 impl Interlude for Blocks {
     fn name(&self) -> &'static str {
-        "鏁寸悊 Bug"
+        "整理 Bug"
     }
 
     fn update(&mut self, app: &mut App, dt: f32) -> bool {
@@ -591,7 +617,7 @@ impl Interlude for Blocks {
         self.mt += dt;
         let t = self.t;
 
-        // 闂畬鐨勮锛氶鍥炴棩蹇楁祦
+        // 闪完的行：飞回日志流
         while let Some(i) = self.clears.iter().position(|c| t - c.t0 >= FLASH) {
             let cl = self.clears.swap_remove(i);
             if let Some(idx) = self.rows.iter().position(|r| r.id == cl.id) {
@@ -614,7 +640,7 @@ impl Interlude for Blocks {
                 self.falls = falls2;
                 if !self.first_clear {
                     self.first_clear = true;
-                    app.quack("鍢庯紒娑堜簡涓€琛?, 1.0);
+                    self.say(app, "嘎！消了一行", 1.0);
                 }
             }
         }
@@ -625,9 +651,10 @@ impl Interlude for Blocks {
                 if self.ph == Ph::Play && t >= T_STOP {
                     self.ph = Ph::Drain;
                     self.mt = 0.0;
-                    app.quack("鍋滐紒閮藉埆鍔?, 1.0);
+                    self.say(app, "停！都别动", 1.0);
                 }
-                // 鍑烘柊鍧?                if self.ph == Ph::Play {
+                // 出新块
+                if self.ph == Ph::Play {
                     let lim = (self.fh / 4).max(3);
                     for li in 0..self.lanes.len() {
                         if self.falls.iter().any(|f| f.lane == li) {
@@ -645,7 +672,8 @@ impl Interlude for Blocks {
                         }
                     }
                 }
-                // 钀?                let mv = if app.hi { 0.035 } else { 0.05 };
+                // 落
+                let mv = if app.hi { 0.035 } else { 0.05 };
                 let falls = std::mem::take(&mut self.falls);
                 let mut keep = Vec::with_capacity(falls.len());
                 for mut f in falls {
@@ -684,11 +712,11 @@ impl Interlude for Blocks {
                     }
                 }
                 self.falls = keep;
-                // 楦腑鎸囨尌
+                // 鸭子指挥
                 for (k, at) in [3.4f32, 7.2, 11.0].iter().enumerate() {
                     if self.chat_i == k && t >= *at && self.ph == Ph::Play {
                         let s = self.chat[k % self.chat.len()];
-                        app.quack(s, 1.3);
+                        self.say(app, s, 1.3);
                         self.chat_i += 1;
                     }
                 }
@@ -698,8 +726,8 @@ impl Interlude for Blocks {
                     self.build_slab();
                     self.ph = Ph::Duck;
                     self.mt = 0.0;
-                    app.push(log_line("WARN", "bug::sched", "妫€娴嬪埌瓒呭ぇ鍧楋細褰㈢姸鍍忎竴鍙腑瀛愶紝褰㈢姸琛ㄩ噷娌℃湁杩欎釜", Kind::Info));
-                    app.quack("鐪嬫垜鐨?, 1.0);
+                    app.push(log_line("WARN", "bug::sched", "检测到超大块：形状像一只鸭子，形状表里没有这个", Kind::Info));
+                    self.say(app, "看我的", 1.0);
                 }
             }
             Ph::Duck => {
@@ -713,14 +741,14 @@ impl Interlude for Blocks {
                 if self.mt >= B_END {
                     self.ph = Ph::Out;
                     self.mt = 0.0;
-                    app.push(log_line("INFO", "bug::home", "bug 浠凡琚鍥為腑楦韩杈癸紙楦腑璇磋繖鏄?feature锛?, Kind::Info));
-                    app.quack("鏀跺伐锛屽洖瀹?, 1.0);
+                    app.push(log_line("INFO", "bug::home", "bug 们已被领回鸭子身边（鸭子说这是 feature）", Kind::Info));
+                    self.say(app, "收工，回家", 1.0);
                 }
             }
             Ph::Out => {}
         }
 
-        // 椋炲洖楦腑韬竟鐨?bug
+        // 飞回鸭子身边的 bug
         let (dx, dy) = (app.duck.x, app.duck.y);
         let ft = if self.ph == Ph::Out { B_END + self.mt } else { self.mt };
         for (i, f) in self.flies.iter_mut().enumerate() {
@@ -737,8 +765,8 @@ impl Interlude for Blocks {
         }
 
         let title = match self.ph {
-            Ph::Boom | Ph::Out => format!("楦腑.exe 鈥?鏁寸悊 bug锛堜竴鍙腑瀛愭暣鐞嗕簡鍏ㄩ儴 {} 琛岋級", self.n),
-            _ => format!("楦腑.exe 鈥?鏁寸悊 bug锛堝凡鏁寸悊鏃ュ織 {} 琛岋級", self.n),
+            Ph::Boom | Ph::Out => format!("鸭子.exe — 整理 bug（一只鸭子整理了全部 {} 行）", self.n),
+            _ => format!("鸭子.exe — 整理 bug（已整理日志 {} 行）", self.n),
         };
         app.set_title(&title);
 
@@ -767,7 +795,8 @@ impl Interlude for Blocks {
         }
         let (x0, fw, fh) = (self.x0, self.fw, self.fh);
 
-        // bug 鍫嗭紙寮€鍦轰粠涓嬪線涓婇暱鍑烘潵锛?        let rv = smooth(0.25, 1.3, t) * (self.jh + 1) as f32;
+        // bug 堆（开场从下往上长出来）
+        let rv = smooth(0.25, 1.3, t) * (self.jh + 1) as f32;
         for r in 0..fh {
             if t < 1.3 && ((fh - r) as f32) > rv {
                 continue;
@@ -795,7 +824,20 @@ impl Interlude for Blocks {
                 }
             }
         }
-        // 姝ｅ湪钀界殑鎬潡
+        // 落点预览：告诉观众这块要落在哪
+        for f in &self.falls {
+            for &(cx, cy) in f.rots[f.r].iter() {
+                let r = f.ly + cy;
+                if r < 0 || r >= self.fh {
+                    continue;
+                }
+                let sx = x0 + (f.tx + cx) * 2;
+                let sy = FY0 + r;
+                app.scr.put(sx, sy, '·', [86, 86, 104], None);
+                app.scr.put(sx + 1, sy, '·', [86, 86, 104], None);
+            }
+        }
+        // 正在落的块
         for f in &self.falls {
             for (k, &(cx, cy)) in f.rots[f.r].iter().enumerate() {
                 let r = f.iy + cy;
@@ -804,7 +846,8 @@ impl Interlude for Blocks {
                 }
             }
         }
-        // 楦腑鍧?        if self.ph == Ph::Duck {
+        // 鸭子块
+        if self.ph == Ph::Duck {
             let u = ((self.mt - D_WAIT) / D_FALL).clamp(0.0, 1.0);
             let off = (-(fh as f32 + 1.0) * (1.0 - u * u)).round() as i32;
             for &(c, r, kind) in &self.slab {
@@ -824,7 +867,8 @@ impl Interlude for Blocks {
                 }
             }
         }
-        // 婊″睆褰╄櫣瀛楋紝浠庝笂寰€涓嬫憾瑙ｅ洖鏃ュ織娴?        if self.ph == Ph::Boom {
+        // 满屏彩虹字，从上往下溶解回日志
+        if self.ph == Ph::Boom {
             let a = self.mt;
             for i in 0..self.bits.len() {
                 let b = &self.bits[i];
@@ -840,7 +884,7 @@ impl Interlude for Blocks {
             }
         }
 
-        // 鎸囨尌楦腑
+        // 指挥鸭子
         if self.small {
             let (x, y) = (app.duck.x, app.duck.y);
             mini_duck(app, x, y, false, 1);
@@ -863,7 +907,7 @@ impl Interlude for Blocks {
     fn draw_over(&mut self, app: &mut App) {
         let t = self.t;
         let (x0, fw) = (self.x0, self.fw);
-        // 娑堟帀鐨勮鍙樻垚褰╄櫣鏃ュ織寰€涓婇
+        // 消掉的行变成彩虹日志往上飞
         for i in 0..self.lines.len() {
             let a = t - self.lines[i].t0;
             let y = (self.lines[i].y0 - (6.0 * a + 42.0 * a * a)).round() as i32;
@@ -873,15 +917,35 @@ impl Interlude for Blocks {
             let text = self.lines[i].text.clone();
             rtext(app, x0, y, &text, x0 + fw * 2);
         }
-        // 椤朵笂鐨勫皬鏍囩
+        // 顶上的小标签
         if self.ph != Ph::Out {
-            let s = if self.ph == Ph::Boom {
-                format!(" 楦腑.exe 鈥?鏁寸悊 bug 路 涓€鍙ｆ皵鏁寸悊浜?{} 琛?", self.slab_n)
+            let s = if self.small {
+                if self.ph == Ph::Boom {
+                    format!(" 鸭子.exe · 一口气 {} 行", self.slab_n)
+                } else {
+                    format!(" 鸭子.exe · 整理 {} 行", self.n)
+                }
+            } else if self.ph == Ph::Boom {
+                format!(" 鸭子.exe — 整理 bug · 一口气整理了 {} 行", self.slab_n)
             } else {
-                format!(" 楦腑.exe 鈥?鏁寸悊 bug 路 宸叉暣鐞嗘棩蹇?{} 琛?", self.n)
+                format!(" 鸭子.exe — 整理 bug · 已整理日志 {} 行", self.n)
             };
             let x = (x0 + (fw * 2 - str_w(&s) as i32) / 2).max(0);
             app.scr.text(x, 0, &s, [235, 235, 240], Some([28, 26, 40]));
+        }
+        if self.small {
+            if let Some((text, until)) = &self.say {
+                if t < *until {
+                    let w = app.scr.w as i32;
+                    let tw = (str_w(text) as i32 + 3).min((w - 2).max(3));
+                    let x = (w - tw - 1).max(1);
+                    let y = 1;
+                    for i in 0..tw {
+                        app.scr.put(x + i, y, ' ', BLACK, Some([250, 250, 245]));
+                    }
+                    app.scr.text(x + 1, y, text, [20, 20, 30], Some([250, 250, 245]));
+                }
+            }
         }
     }
 }
