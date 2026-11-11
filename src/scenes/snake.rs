@@ -197,7 +197,7 @@ impl Snake {
             dimtab: (0..256u32)
                 .map(|i| {
                     let i = i as u8;
-                    let k = if i >= Band::Dim as u8 && i < Band::Duck as u8 { 0.62 } else { 0.28 };
+                    let k = if i >= Band::Dim as u8 && i < Band::Duck as u8 { 0.45 } else { 0.19 };
                     scale(pal_rgb(i, app.pal_t()), k)
                 })
                 .collect(),
@@ -570,7 +570,7 @@ fn moth_k(app: &mut App, cx: f32, cy: f32, shade: u8, flap: f32, k: i32) {
     }
 }
 
-/// 日志压暗退到背景：彩虹字换成插曲开始那一刻的颜色、压到三成左右的静态真彩色（不再流动，静止时零成本）。
+/// 日志压暗退到背景：彩虹字换成插曲开始那一刻的颜色、压到两成左右的静态真彩色（不再流动，静止时零成本）。
 /// (x + 2y)/span 在 [lo, hi) 之间的格子才压暗，用来做斜着扫过去的转场。
 fn dim_logs(app: &mut App, tab: &[Rgb], lo: f32, hi: f32) {
     let (w, h) = (app.scr.w, app.scr.h);
@@ -584,11 +584,11 @@ fn dim_logs(app: &mut App, tab: &[Rgb], lo: f32, hi: f32) {
             let c = &mut app.scr.cells[y * w + x];
             c.fg = Col::T(match c.fg {
                 Col::P(i) => tab[i as usize],
-                Col::T(rgb) => scale(rgb, 0.3),
+                Col::T(rgb) => scale(rgb, 0.21),
             });
             if let Col::T(b) = c.bg {
                 if b != BLACK {
-                    c.bg = Col::T(scale(b, 0.3));
+                    c.bg = Col::T(scale(b, 0.21));
                 }
             }
         }
