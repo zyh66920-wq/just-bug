@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 // ───────────────────────── 最小 Win32 控制台接口（零依赖） ─────────────────────────
 #[allow(non_snake_case)]
+mod scenes;
+
 mod win {
     pub type Handle = *mut core::ffi::c_void;
     pub const STD_INPUT: u32 = -10i32 as u32;
@@ -676,6 +678,8 @@ enum Phase {
     Collapse,
     Bang,
     End(Ending),
+    /// 插曲：日常之后随机插一段经典小游戏/经典屏保（见 scenes/）
+    Inter,
 }
 
 struct App {
@@ -706,6 +710,10 @@ struct App {
     /// 满效果（默认）：60 帧、鸭鸭/光晕/飞字逐帧真彩色。电脑或终端跟不上时主循环自动关掉，换省流量画法
     pub hi: bool,
     last_top: Option<u64>,
+    inter: Option<Box<dyn scenes::Interlude>>,
+    inter_name: &'static str,
+    inter_bag: Vec<usize>,
+    forced_inter: Option<usize>,
 }
 
 impl App {
@@ -752,6 +760,10 @@ impl App {
             line_no: 0,
             hi: true,
             last_top: None,
+            inter: None,
+            inter_name: "",
+            inter_bag: Vec::new(),
+            forced_inter: None,
         };
         a.set_title("C:\\Windows\\system32\\cmd.exe");
         a
@@ -995,9 +1007,19 @@ impl App {
                 }
             }
             Phase::End(e) => self.update_ending(e, dt),
+            Phase::Inter => {
+                let mut sc = self.inter.take().expect("inter scene");
+                if sc.update(self, dt) {
+                    self.end_inter();
+                } else {
+                    self.inter = Some(sc);
+                }
+            }
         }
         self.update_duck(dt);
-        self.update_moths(dt);
+        if self.phase != Phase::Inter {
+            self.update_moths(dt);
+        }
     }
 
     fn enter_daily(&mut self) {
@@ -1051,9 +1073,45 @@ impl App {
             self.quack("嘎", 0.9);
         }
         if self.pt > 11.0 {
-            self.go(Phase::Nap);
-            self.set_title("鸭鸭睡着了");
+            self.start_inter();
         }
+    }
+
+    fn start_inter(&mut self) {
+        let i = match self.forced_inter {
+            Some(i) => i % scenes::COUNT,
+            None => {
+                if self.inter_bag.is_empty() {
+                    let mut b: Vec<usize> = (0..scenes::COUNT).collect();
+                    for i in (1..b.len()).rev() {
+                        let j = self.rng.int(i + 1);
+                        b.swap(i, j);
+                    }
+                    self.inter_bag = b;
+                }
+                self.inter_bag.pop().unwrap()
+            }
+        };
+        self.go(Phase::Inter);
+        self.last_top = None;
+        self.duck.bubble = None;
+        let sc = scenes::make(i, self);
+        self.inter_name = sc.name();
+        self.inter = Some(sc);
+    }
+
+    fn end_inter(&mut self) {
+        self.inter = None;
+        self.go(Phase::Nap);
+        self.last_top = None;
+        self.mmode = MothMode::Orbit;
+        self.duck.visible = true;
+        self.duck.asleep = false;
+        self.duck.glow_to = 1.0;
+        self.duck.tx = self.w() / 2.0;
+        self.duck.ty = self.lane_y();
+        self.moths.truncate(10);
+        self.set_title("鸭鸭睡着了");
     }
 
     fn update_nap(&mut self, dt: f32) {
@@ -1563,11 +1621,25 @@ impl App {
     fn draw(&mut self) {
         self.scr.clear();
         self.layer.clear();
+        if self.phase == Phase::Inter {
+            // 插曲自己决定画什么（日志、鸭鸭、飞蛾都可以调 App 的现成方法），像素层统一最后合成
+            self.last_top = None;
+            if let Some(mut sc) = self.inter.take() {
+                sc.draw(self);
+                self.layer.composite(&mut self.scr);
+                sc.draw_over(self);
+                self.inter = Some(sc);
+            }
+            if self.duck.visible {
+                self.draw_duck_fx();
+            }
+            return;
+        }
         let mut duck_clip = None;
         let drew_logs_before = self.last_top;
         self.last_top = None;
         match self.phase {
-            Phase::Boot => self.draw_logs(0.0, 0, 0.0),
+            Phase::Boot | Phase::Inter => self.draw_logs(0.0, 0, 0.0),
             Phase::Sweep => self.draw_logs(self.pt / 1.2, 0, 0.0),
             Phase::Daily | Phase::Nap => {
                 self.last_top = drew_logs_before;
@@ -2175,6 +2247,11 @@ fn dump(args: &[String]) {
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mut app = App::new(w, h, seed);
     app.forced = get("--ending").and_then(|s| s.parse::<usize>().ok()).map(|i| ENDINGS[i % 4]);
+    // --inter N：每轮都插第 N 个插曲；导出画面时 --at 改成「插曲开始后第几秒」
+    app.forced_inter = get("--inter").and_then(|s| s.parse::<usize>().ok());
+    if args.iter().any(|a| a == "--lite") {
+        app.hi = false;
+    }
     let mut html = String::from(
         "<!doctype html><meta charset=utf-8><style>body{background:#111;color:#ccc;font-family:sans-serif}pre{font-family:Consolas,'Cascadia Mono',monospace;font-size:9px;line-height:1;background:#000;display:inline-block;margin:0 0 8px}</style>",
     );
@@ -2219,6 +2296,7 @@ fn dump(args: &[String]) {
             max_parts = max_parts.max(app.parts.len());
             let name = match app.phase {
                 Phase::End(_) => "Ending".to_string(),
+                Phase::Inter => format!("Inter:{}", app.inter_name),
                 p => format!("{:?}", p),
             };
             match by_phase.iter_mut().find(|p| p.0 == name) {
@@ -2251,12 +2329,27 @@ fn dump(args: &[String]) {
     }
     let json = path.ends_with(".json");
     let mut js = String::from("[");
+    let rel = app.forced_inter.is_some();
+    let mut seen_inter = false;
     for at in times {
-        while app.t < at {
+        loop {
+            if rel {
+                if app.phase == Phase::Inter {
+                    seen_inter = true;
+                    if app.pt >= at {
+                        break;
+                    }
+                } else if seen_inter {
+                    eprintln!("插曲在 {:.1}s 前就结束了", at);
+                    break;
+                }
+            } else if app.t >= at {
+                break;
+            }
             app.update(dt);
             app.draw();
         }
-        let label = format!("t={:.1}s  phase={:?}  pt={:.1}  moths={}", app.t, app.phase, app.pt, app.moths.len());
+        let label = format!("t={:.1}s  phase={:?}{}  pt={:.1}  moths={}", app.t, app.phase, if app.phase == Phase::Inter { format!("({})", app.inter_name) } else { String::new() }, app.pt, app.moths.len());
         if json {
             frame_json(&app.scr, &label, &mut js, app.pal_t());
         } else {
