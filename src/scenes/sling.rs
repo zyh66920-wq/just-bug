@@ -48,6 +48,7 @@ const BEAMS: [&str; 10] = [
     "WARN works on my machine",
     "FIXME: magic number 37, do not touch",
 ];
+const BEAMS_SM: [&str; 8] = ["ERR ", "WARN ", "TODO ", "FIX ", "BUG ", "NULL ", "PANIC ", "GC "];
 const COLS: [&str; 8] = ["FIXME", "HACK", "TODO", "XXX", "BUG", "TEMP", "LEGACY", "WTF"];
 const FIXED_TXT: [&str; 4] = [
     "[FIXED] castle.rs 重构完成 0 warning",
@@ -188,7 +189,7 @@ fn say(app: &mut App, cx: i32, by: i32, text: &str) {
     let w = app.scr.w as i32;
     let tw = str_w(text) as i32 + 4;
     let bx = (cx - tw / 2).clamp(0, (w - tw).max(0));
-    let by = by.max(0);
+    let by = by.max(if w < 70 { 1 } else { 0 });
     let bgc = [250, 250, 245];
     for row in 0..3 {
         for x in 0..tw {
@@ -326,10 +327,17 @@ impl Sling {
             }
             // 梁：一整行烂日志，切成几段
             let mut txt = String::new();
-            while (txt.chars().count() as i32) < wd {
-                txt.push_str(BEAMS[beam_i % BEAMS.len()]);
-                txt.push_str("  ");
-                beam_i += 1;
+            if w < 70 {
+                while (txt.chars().count() as i32) < wd {
+                    txt.push_str(BEAMS_SM[beam_i % BEAMS_SM.len()]);
+                    beam_i += 1;
+                }
+            } else {
+                while (txt.chars().count() as i32) < wd {
+                    txt.push_str(BEAMS[beam_i % BEAMS.len()]);
+                    txt.push_str("  ");
+                    beam_i += 1;
+                }
             }
             let chars: Vec<char> = txt.chars().take(wd as usize).collect();
             let kind = if chars.starts_with(&['E', 'R', 'R']) { 1 } else if chars.starts_with(&['W', 'A', 'R', 'N']) { 2 } else { 0 };
@@ -1124,6 +1132,7 @@ impl Interlude for Sling {
                     self.px(app, pq.0.round() as i32, pq.1.round() as i32 + dy, [120, 50, 80]);
                 }
                 if let Some((dx, dy, right)) = self.duck(t) {
+                    let dy = if k == 1 { dy.max(6.0) } else { dy };
                     if (dy / 2.0) as i32 + 2 < self.clip / 2 {
                         mini_duck(app, dx, dy, right, k);
                     }
