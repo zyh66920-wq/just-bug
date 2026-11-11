@@ -478,7 +478,7 @@ impl Snake {
         app.push(log_line("ERROR", "snake::ai", "无路可走：贪吃 bug 把自己绕成了死结（deadlock）", Kind::Info));
     }
 
-    fn burst(&mut self, app: &mut App) {
+    fn burst(&mut self, _app: &mut App) {
         let n = self.body.len();
         let (kx, ky) = self.knot;
         for (i, s) in self.body.iter().enumerate() {

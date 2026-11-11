@@ -1819,7 +1819,7 @@ impl App {
                 if d < 1.0 {
                     if let Some(bg) = self.scr.bg_at(x, y) {
                         if let Col::T(b) = *bg {
-                            let k = ((0.26 * g * (1.0 - d).powi(2)) * 24.0).round() / 24.0;
+                            let k = ((0.14 * g * (1.0 - d).powi(3)) * 24.0).round() / 24.0;
                             *bg = Col::T(mix(b, col, k));
                         }
                     }

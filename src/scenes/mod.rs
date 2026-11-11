@@ -155,6 +155,7 @@ pub fn window(app: &mut App, x0: i32, y0: i32, x1: i32, y1: i32, title: &str, fg
 }
 
 /// 清一块字符区域为纯色背景
+#[allow(dead_code)]
 pub fn fill(app: &mut App, x0: i32, y0: i32, x1: i32, y1: i32, bg: Rgb) {
     for y in y0..=y1 {
         for x in x0..=x1 {
