@@ -87,6 +87,7 @@ pub struct Chain {
     logged_combo: bool,
     eaten: u32,
     jiggle: f32,
+    say: Option<(String, f32)>,
 }
 
 impl Chain {
@@ -210,6 +211,7 @@ impl Chain {
             logged_combo: false,
             eaten: 0,
             jiggle: 0.0,
+            say: None,
         };
         let c = me.next_color(app, 255);
         me.beads.push(Bead { id: 0, c, s: -2.0 * d, g: 1.0 });
@@ -226,6 +228,15 @@ impl Chain {
 
     fn mouth(&self, right: bool) -> (f32, f32) {
         (self.cx + if right { self.mo.0 } else { -self.mo.0 }, self.cy + self.mo.1)
+    }
+
+    /// 小屏自己画气泡：App 的鸭子气泡按 18 列宽算位置，40x12 上会落到状态栏那一行
+    fn say(&mut self, app: &mut App, text: &str, dur: f32) {
+        if self.small {
+            self.say = Some((text.to_string(), self.t + dur));
+        } else {
+            app.quack(text, dur);
+        }
     }
 
     /// 生成链条颜色：大多是 1–2 颗一组，夹着能触发连击的「X X Y Y X」「X X Z Z Y Y Z X」
@@ -551,7 +562,7 @@ impl Interlude for Chain {
 
         // ── 飞蛾 ──
         let (cx, cy) = (self.cx, self.cy);
-        let (orx, ory) = ((self.dh.0 + 9.0) * self.ex.min(1.5), self.dh.1 + 6.0);
+        let (orx, ory) = ((self.dh.0 + 9.0) * self.ex.min(1.5), self.dh.1 + if self.small { 4.0 } else { 6.0 });
         let (w, hp) = (app.w(), app.hp());
         self.flies.retain_mut(|f| {
             f.ph += dt * 9.0;
@@ -579,22 +590,22 @@ impl Interlude for Chain {
         if self.step == 0 && t >= T_DUD {
             self.step += 1;
             app.duck.right = true;
-            app.quack("噗……", 0.9);
+            self.say(app, "噗……", 0.9);
             app.push(log_line("ERROR", "chain::shooter", "BubblePoolExhausted：泡泡打光了，下一发要等 GC", Kind::Error));
         }
         if self.step == 1 && t >= T_SLURP {
             self.step += 1;
             app.duck.right = true;
-            app.quack("嘎！", 0.5);
+            self.say(app, "嘎！", 0.5);
             app.push(log_line("WARN", "duck::mouth", "链表即将溢出到嘴里——改用 O(1) 一口吞下", Kind::Info));
         }
         if self.step == 2 && t >= T_SLURP + 0.5 {
             self.step += 1;
-            app.quack("吸溜——", 1.1);
+            self.say(app, "吸溜——", 1.1);
         }
         if self.step == 3 && t >= T_BURP {
             self.step += 1;
-            app.quack("嗝", 0.6);
+            self.say(app, "嗝", 0.6);
             let n = (self.eaten as usize).clamp(6, if app.hi { 14 } else { 7 });
             let (mx, my) = self.mouth(true);
             for i in 0..n {
@@ -617,7 +628,7 @@ impl Interlude for Chain {
         }
         if self.step == 5 && t >= T_LOVE {
             self.step += 1;
-            app.quack("嘎，舍不得 free", 1.3);
+            self.say(app, "嘎，舍不得 free", 1.3);
         }
         app.duck.x = cx;
         app.duck.tx = cx;
@@ -672,22 +683,7 @@ impl Interlude for Chain {
             Self::draw_bead(app, x, y, COLORS[b.c as usize], self.r, b.g, wig);
         }
 
-        // 鸭鸭（画在珠子之后，珠子不会盖住它）
-        if t >= T_DUCK && out < 0.12 {
-            if self.small {
-                mini_duck(app, app.duck.x, app.duck.y, app.duck.right, 1);
-            } else {
-                app.draw_glow(app.duck.glow * smooth(T_DUCK, T_DUCK + 0.6, t));
-                app.draw_duck(None);
-            }
-        }
-
-        // 嘴边含着的下一发 / 飞行中的彩虹泡
-        let shooting = (T_SHOOT0..T_SHOOT1).contains(&t);
-        if shooting && self.shot.is_none() {
-            let (mx, my) = self.mouth(app.duck.right);
-            Self::draw_bead(app, mx + if app.duck.right { 1.0 } else { -1.0 }, my, COLORS[self.hold as usize], (self.r - 1).max(1), 1.0, false);
-        }
+        // 飞行中的彩虹泡：先画，贴着身体的部分会被后面的鸭鸭挡住
         if let Some(sh) = &self.shot {
             let (x, y, c) = (sh.x, sh.y, COLORS[sh.c as usize]);
             let r = self.r;
@@ -716,21 +712,42 @@ impl Interlude for Chain {
                 app.layer.set(px.round() as i32, py.round() as i32, rb(Band::Text, px, py));
             }
         }
-        // 没打出来的那一发
+
+        // 鸭鸭：珠子、泡泡都盖不住它
+        if t >= T_DUCK && out < 0.12 {
+            if self.small {
+                mini_duck(app, app.duck.x, app.duck.y, app.duck.right, 1);
+            } else {
+                app.draw_glow(app.duck.glow * smooth(T_DUCK, T_DUCK + 0.6, t));
+                app.draw_duck(None);
+            }
+        }
+
+        // 嘴边含着的下一发（小屏放到嘴外，免得压住鸭鸭）
+        let shooting = (T_SHOOT0..T_SHOOT1).contains(&t);
+        if shooting && self.shot.is_none() {
+            let (mx, my) = self.mouth(app.duck.right);
+            let dir = if app.duck.right { 1.0 } else { -1.0 };
+            let d = if self.small { 4.0 } else { 1.0 };
+            Self::draw_bead(app, mx + dir * d, my, COLORS[self.hold as usize], (self.r - 1).max(1), 1.0, false);
+        }
+
+        // 没打出来的那一发（小屏往外挪，别压到鸭鸭）
         if (T_DUD..T_DUD + 0.5).contains(&t) {
-            let (mx, my) = self.mouth(true);
+            let (mx0, my) = self.mouth(true);
+            let mx = mx0 + if self.small { 6.5 } else { 2.0 };
             let u = (t - T_DUD) / 0.5;
             if u < 0.45 {
                 let rr = 1 + (u * 4.0) as i32;
                 for k in 0..8 {
                     let a = k as f32 / 8.0 * TAU;
-                    app.layer.set((mx + 2.0 + a.cos() * rr as f32).round() as i32, (my + a.sin() * rr as f32).round() as i32, [200, 200, 210]);
+                    app.layer.set((mx + a.cos() * rr as f32).round() as i32, (my + a.sin() * rr as f32).round() as i32, [200, 200, 210]);
                 }
             } else {
                 for k in 0..3 {
                     let a = k as f32 * 2.1 - 1.0;
                     let rr = 3.0 + u * 5.0;
-                    app.layer.set((mx + 2.0 + a.cos() * rr).round() as i32, (my + a.sin() * rr).round() as i32, [120, 120, 130]);
+                    app.layer.set((mx + a.cos() * rr).round() as i32, (my + a.sin() * rr).round() as i32, [120, 120, 130]);
                 }
             }
         }
@@ -741,7 +758,7 @@ impl Interlude for Chain {
             if hidden(app, f.x, f.y) {
                 continue;
             }
-            let (x, y, s, fl) = (f.x, f.y, f.shade, f.ph);
+            let (x, y, s, fl) = (f.x, f.y.max(3.0), f.shade, f.ph);
             let rain = if hi { (1.0 - (t - f.born) / 0.9).clamp(0.0, 1.0) } else { 0.0 };
             let fl = if hi { fl } else { fl * 0.5 };
             moth(app, x, y, s, fl, rain);
@@ -768,6 +785,20 @@ impl Interlude for Chain {
             let w = app.scr.w as i32;
             let x = ((w - str_w(&s) as i32) / 2).max(0);
             app.scr.text(x, 0, &s, [235, 235, 240], Some(HUD_BG));
+        }
+        if self.small {
+            if let Some((text, until)) = &self.say {
+                if t < *until {
+                    let w = app.scr.w as i32;
+                    let tw = (str_w(text) as i32 + 3).min((w - 2).max(3));
+                    let x = (self.cx as i32 + 4).clamp(1, (w - tw - 1).max(1));
+                    let y = 1;
+                    for i in 0..tw {
+                        app.scr.put(x + i, y, ' ', BLACK, Some([250, 250, 245]));
+                    }
+                    app.scr.text(x + 1, y, text, [20, 20, 30], Some([250, 250, 245]));
+                }
+            }
         }
         for p in &self.pops {
             let age = t - p.t0;

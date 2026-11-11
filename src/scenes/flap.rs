@@ -234,7 +234,11 @@ impl Flap {
         self.dh = (7 * k + 2) as f32;
         self.half = (5 * k + 1) as f32;
         self.dx = (wf / 3.0).round();
-        let sp = (wf * 0.2).max((if small { 1.9 } else { 2.6 }) * (10 * k + 2) as f32 + pw as f32);
+        let sp = if small {
+            (wf * 0.2).max(1.9 * (10 * k + 2) as f32 + pw as f32)
+        } else {
+            (wf * 0.255).max(1.8 * (10 * k + 2) as f32 + pw as f32)
+        };
         let spacing = if app.hi { sp } else { sp * 1.5 };
         self.v0 = sp / 1.6;
         self.v1 = sp / 1.15;
