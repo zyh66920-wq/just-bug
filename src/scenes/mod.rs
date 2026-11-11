@@ -12,10 +12,14 @@
 //! - 可以 push 日志、set_title、quack 冒泡，让插曲和主线的「终端里的故事」接得上。
 use crate::*;
 
+mod blocks;
+mod chain;
 mod corner;
+mod flap;
 mod life;
 mod rain;
 mod runner;
+mod sling;
 mod snake;
 mod sweeper;
 mod warp;
@@ -31,7 +35,7 @@ pub trait Interlude {
     fn draw_over(&mut self, _app: &mut App) {}
 }
 
-pub const COUNT: usize = 7;
+pub const COUNT: usize = 11;
 
 pub fn make(i: usize, app: &mut App) -> Box<dyn Interlude> {
     match i {
@@ -41,7 +45,11 @@ pub fn make(i: usize, app: &mut App) -> Box<dyn Interlude> {
         3 => Box::new(corner::Corner::new(app)),
         4 => Box::new(sweeper::Sweeper::new(app)),
         5 => Box::new(snake::Snake::new(app)),
-        _ => Box::new(runner::Runner::new(app)),
+        6 => Box::new(runner::Runner::new(app)),
+        7 => Box::new(chain::Chain::new(app)),
+        8 => Box::new(flap::Flap::new(app)),
+        9 => Box::new(sling::Sling::new(app)),
+        _ => Box::new(blocks::Blocks::new(app)),
     }
 }
 
