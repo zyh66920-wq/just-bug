@@ -4,7 +4,7 @@
 //!
 //! 轨迹做法：从「终点在角落」倒推。把墙展开成直线，x(t) = tri(vx·(t−T) + cx·Lx)，tri 是在 [0, L] 里来回反射的三角波，
 //! t = T 时必然正好落在角 (cx·Lx, cy·Ly)。再按当前屏幕尺寸网格搜索速度和角，挑出「前面有一两次差一点、
-//! 之前绝不会提前进角」的那一组。屏幕再小也一样成立。
+//! 之前绝不会提前进角」的那一组。屏幕再小也一样成立。终点只选上面两个角（下面有观众席，撞进去看着不像角）。
 use super::*;
 
 /// 正好撞进角落的时刻（插曲内秒数）
@@ -26,6 +26,25 @@ const COLORS: [Rgb; 8] = [
     [190, 115, 255],
     [255, 125, 205],
 ];
+
+/// 高潮大字「嘎！！」：手画点阵（16×14 / 2×14），画在像素层、按调色板彩虹上色
+const GA: [&str; 14] = [
+    "......##########",
+    "...........#....",
+    "####....#######.",
+    "#..#....#.....#.",
+    "#..#....#######.",
+    "#..#....#.....#.",
+    "#..#....#######.",
+    "####.....#....#.",
+    "......##########",
+    "..........#...#.",
+    "...........#.#..",
+    "............#...",
+    "...........#.#.#",
+    ".........##...##",
+];
+const BANG: [&str; 14] = ["##", "##", "##", "##", "##", "##", "##", "##", "##", "##", "..", "##", "##", ".."];
 
 const MISS: [&str; 3] = ["差一点！", "啊啊啊就差一格！", "又差一点！！"];
 const SIGH: [&str; 3] = ["唉——", "（失望地趴回去）", "这都能不进？"];
@@ -70,7 +89,7 @@ impl Plan {
         let nmx = (lx * 0.12).clamp(2.2, 6.0);
         let nmy = (ly * 0.25).clamp(1.3, 2.6);
         let mut best: Option<(f32, Plan)> = None;
-        for corner in 0..4 {
+        for corner in 0..2 {
             let (cx, cy) = ((corner & 1) as f32, (corner >> 1) as f32);
             for ix in 0..48 {
                 let tx = 2.6 + ix as f32 * 0.075;
@@ -181,8 +200,10 @@ struct Spark {
     life: f32,
     hue: u8,
     rocket: bool,
-    /// 火箭的减速度（行/秒²）
+    /// 火箭的减速度（像素/秒²）
     g: f32,
+    /// 火箭炸开的大小倍数
+    size: f32,
 }
 
 pub struct Corner {
@@ -197,8 +218,11 @@ pub struct Corner {
     color: usize,
     aud: Vec<Aud>,
     sparks: Vec<Spark>,
-    next_rocket: f32,
+    /// 待发射的火箭：(时刻, 横向位置比例, 炸点高度比例, 大小)
+    launches: Vec<(f32, f32, f32, f32)>,
     hit: bool,
+    /// 大字底部所在的字符行（没画大字时为 None）
+    big_bottom: Option<i32>,
     logged: bool,
     handed: bool,
 }
@@ -241,8 +265,9 @@ impl Corner {
             color,
             aud,
             sparks: Vec::new(),
-            next_rocket: T_HIT + 0.1,
+            launches: Vec::new(),
             hit: false,
+            big_bottom: None,
             logged: false,
             handed: false,
         };
@@ -261,8 +286,9 @@ impl Corner {
         } else {
             1
         };
-        self.bw = 10 * self.k + 2;
-        self.duck_rows = (7 * self.k + 3) / 2;
+        // 标志外框就是鸭身像素本身（不留描边），撞进角时身子正好贴住两条边
+        self.bw = 10 * self.k;
+        self.duck_rows = (7 * self.k + 1) / 2;
         let aud_rows = if h >= 24 { 3 } else { 2 };
         self.area_h = h as i32 - aud_rows;
         let lx = (w as i32 - self.bw).max(2) as f32;
@@ -303,6 +329,13 @@ impl Corner {
         e
     }
 
+    /// 同屏粒子上限：按屏幕面积给，省流量档减半
+    fn cap(app: &App) -> usize {
+        let c = (app.scr.w * app.scr.h / 10).clamp(150, 1600);
+        if app.hi { c } else { c / 2 }
+    }
+
+    /// 炸开一朵：像素坐标，按角度排成一圈彩虹（调色板色，颜色流动不花带宽）
     fn burst(&mut self, x: f32, y: f32, n: usize, a0: f32, a1: f32, spd: f32, rng: &mut Rng, cap: usize) {
         let hue = rng.int(PN as usize) as u8;
         for _ in 0..n {
@@ -310,49 +343,68 @@ impl Corner {
                 break;
             }
             let a = rng.range(a0, a1);
-            let s = rng.range(0.35, 1.0) * spd;
+            // 七成在外圈成环，三成填在里面
+            let s = if rng.f() < 0.7 { rng.range(0.75, 1.0) } else { rng.range(0.2, 0.75) } * spd;
             self.sparks.push(Spark {
                 x,
                 y,
-                vx: a.cos() * s * 2.0,
+                vx: a.cos() * s,
                 vy: a.sin() * s,
                 age: 0.0,
-                life: rng.range(0.9, 1.7),
-                // 一朵烟花绕一圈就是一圈彩虹（调色板色，流动免费）
-                hue: (hue as f32 + ((a - a0) / (a1 - a0)).fract() * PN as f32 + rng.range(0.0, 3.0)) as u8 % PN,
+                life: rng.range(1.1, 1.9),
+                hue: (hue as f32 + ((a - a0) / (a1 - a0)).fract() * PN as f32 + rng.range(0.0, 2.0)) as u8 % PN,
                 rocket: false,
                 g: 0.0,
+                size: 0.0,
             });
         }
     }
 
     fn update_sparks(&mut self, app: &mut App, dt: f32) {
-        let h = app.scr.h as f32;
-        let g = h * 0.55;
-        let cap = if app.hi { 420 } else { 160 };
-        let per = if app.hi { 34 } else { 20 };
-        let mut pops: Vec<(f32, f32)> = Vec::new();
+        let (w, hp) = (app.w(), app.hp());
+        let g = hp * 0.35;
+        let cap = Self::cap(app);
+        let per = if app.hi { 110.0 } else { 55.0 };
+        let r0 = w.min(hp) * 0.2;
+        // 按波次发射
+        let t = self.t;
+        let mut i = 0;
+        while i < self.launches.len() {
+            let (at, xf, af, size) = self.launches[i];
+            if t >= at {
+                self.launches.swap_remove(i);
+                let y0 = hp - 1.0;
+                let dh = y0 - hp * af;
+                let rise = 0.55;
+                let x = w * xf;
+                let vx = app.rng.range(-6.0, 6.0);
+                self.sparks.push(Spark { x, y: y0, vx, vy: -2.0 * dh / rise, age: 0.0, life: 9.0, hue: 0, rocket: true, g: 2.0 * dh / (rise * rise), size });
+            } else {
+                i += 1;
+            }
+        }
+        let mut pops: Vec<(f32, f32, f32)> = Vec::new();
         for p in self.sparks.iter_mut() {
             p.age += dt;
             if p.rocket {
                 p.vy += p.g * dt;
                 p.y += p.vy * dt;
                 p.x += p.vx * dt;
-                if p.vy > -p.g * 0.08 {
-                    pops.push((p.x, p.y));
+                if p.vy > -p.g * 0.06 {
+                    pops.push((p.x, p.y, p.size));
                     p.age = p.life + 1.0;
                 }
             } else {
-                let drag = (1.0 - 0.8 * dt).max(0.0);
+                let drag = (1.0 - 1.5 * dt).max(0.0);
                 p.vx *= drag;
-                p.vy = p.vy * drag + g * 0.3 * dt;
+                p.vy = p.vy * drag + g * dt;
                 p.x += p.vx * dt;
                 p.y += p.vy * dt;
             }
         }
-        self.sparks.retain(|p| p.age <= p.life && p.y < h + 1.0);
-        for (x, y) in pops {
-            self.burst(x, y, per, 0.0, TAU, h * 0.42, &mut app.rng, cap);
+        self.sparks.retain(|p| p.age <= p.life && p.y < hp + 2.0);
+        for (x, y, size) in pops {
+            self.burst(x, y, (per * size) as usize, 0.0, TAU, r0 * size * 2.4, &mut app.rng, cap);
         }
     }
 
@@ -363,8 +415,9 @@ impl Corner {
         let right = self.plan.right(t);
         let after = t - T_HIT;
         // 撞进角的一瞬间闪白，之后露出鸭鸭本色（彩虹）
-        let body: Option<Rgb> = if self.hit && after < 0.14 {
-            Some(WHITE)
+        // 全屏白闪那一下，鸭鸭是一个深色剪影
+        let body: Option<Rgb> = if self.hit && after < 0.15 {
+            Some([25, 22, 35])
         } else if self.hit {
             None
         } else {
@@ -393,7 +446,7 @@ impl Corner {
                 }
             }
         }
-        let (ox, oy) = (bx, by * 2);
+        let (ox, oy) = (bx - 1, by * 2 - 1);
         for y in 0..gh {
             for x in 0..gw {
                 if let Some(c) = buf[(y * gw + x) as usize] {
@@ -417,9 +470,9 @@ impl Corner {
                 None => rb(Band::Text, x as f32 * 3.0, 0.0),
             };
             if x == px0 - 1 {
-                app.scr.put_c(x, py, '▐', c, Some(Col::T(BLACK)));
+                app.scr.put_c(x, py, '▐', c, None);
             } else if x == px0 + pw {
-                app.scr.put_c(x, py, '▌', c, Some(Col::T(BLACK)));
+                app.scr.put_c(x, py, '▌', c, None);
             } else {
                 app.scr.put_c(x, py, ' ', c, Some(c));
             }
@@ -437,26 +490,95 @@ impl Corner {
         }
     }
 
+    /// 烟花画在像素层：半格一颗的粗颗粒，带一颗暗色拖尾，后半生转暗
     fn draw_sparks(&self, app: &mut App) {
         for p in &self.sparks {
-            let (x, y) = (p.x.round() as i32, p.y.floor() as i32);
+            let (x, y) = (p.x.round() as i32, p.y.round() as i32);
             if p.rocket {
-                app.scr.put(x, y, '|', [255, 225, 170], None);
-                app.scr.put(x, y + 1, '.', [120, 100, 80], None);
+                app.layer.set(x, y, [255, 240, 210]);
+                for k in 1..=4 {
+                    let f = k as f32 * 0.014;
+                    let c = scale([255, 190, 110], 1.0 - k as f32 * 0.2);
+                    app.layer.set((p.x - p.vx * f).round() as i32, (p.y - p.vy * f).round() as i32, c);
+                }
                 continue;
             }
             let f = p.age / p.life;
-            let ch = if f < 0.3 {
-                '*'
-            } else if f < 0.55 {
-                '+'
-            } else if f < 0.8 {
-                '·'
-            } else {
-                '.'
-            };
-            let band = if f < 0.7 { Band::Text } else { Band::Dim };
-            app.scr.put_c(x, y, ch, Col::P(band as u8 + p.hue), None);
+            if f < 0.75 {
+                let (tx, ty) = ((p.x - p.vx * 0.06).round() as i32, (p.y - p.vy * 0.06).round() as i32);
+                if (tx, ty) != (x, y) {
+                    app.layer.set(tx, ty, Col::P(Band::Dim as u8 + p.hue));
+                }
+            }
+            let band = if f < 0.6 { Band::Text } else { Band::Dim };
+            app.layer.set(x, y, Col::P(band as u8 + p.hue));
+        }
+    }
+
+    /// 高潮大字「嘎！！」：从上面掉下来定住，彩虹点阵 + 深色描边。返回大字底部所在的字符行
+    fn draw_big(&self, app: &mut App, a: f32) -> Option<i32> {
+        let (w, hp) = (app.scr.w as i32, app.hp());
+        if app.scr.h < 16 {
+            return None;
+        }
+        let units = 16 + 2 + 2 + 2 + 2 + 2; // 嘎 + 空 + ！ + 空 + ！
+        let s = ((w as f32 * 0.42 / units as f32).min(hp * 0.36 / 14.0) as i32).clamp(1, 3);
+        let gw = units * s;
+        let gh = 14 * s;
+        let x0 = (w - gw) / 2;
+        let drop = (1.0 - smooth(0.0, 0.22, a)) * hp * 0.35;
+        let y0 = (hp * 0.16 - drop).round() as i32;
+        let mut buf = vec![false; (gw * gh) as usize];
+        let put = |g: &[&str], ox: i32, buf: &mut Vec<bool>| {
+            for (j, row) in g.iter().enumerate() {
+                for (i, ch) in row.chars().enumerate() {
+                    if ch == '#' {
+                        for sy in 0..s {
+                            for sx in 0..s {
+                                let (px, py) = (ox + i as i32 * s + sx, j as i32 * s + sy);
+                                buf[(py * gw + px) as usize] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        put(&GA, 0, &mut buf);
+        put(&BANG, 18 * s, &mut buf);
+        put(&BANG, 22 * s, &mut buf);
+        let on = |x: i32, y: i32| x >= 0 && y >= 0 && x < gw && y < gh && buf[(y * gw + x) as usize];
+        for y in -1..=gh {
+            for x in -1..=gw {
+                if on(x, y) {
+                    let c = rb(Band::Duck, (x0 + x) as f32 * 0.9, (y0 + y) as f32 * 0.45);
+                    app.layer.set(x0 + x, y0 + y, c);
+                } else if on(x - 1, y) || on(x + 1, y) || on(x, y - 1) || on(x, y + 1) {
+                    app.layer.set(x0 + x, y0 + y, [10, 8, 18]);
+                }
+            }
+        }
+        Some((y0 + gh + 1) / 2)
+    }
+
+    /// 撞击瞬间：从角落射出一圈彩虹放射线
+    fn draw_rays(&self, app: &mut App, a: f32) {
+        let k = smooth(0.08, 0.5, a);
+        if k <= 0.0 || a > 0.6 {
+            return;
+        }
+        let (w, hp) = (app.w(), app.hp());
+        let cx = if self.plan.cx > 0.5 { w - 1.0 } else { 0.0 };
+        let dir = if self.plan.cx > 0.5 { -1.0 } else { 1.0 };
+        let len = (w * w + hp * hp).sqrt() * k;
+        for r in 0..11 {
+            let ang = 0.08 + r as f32 * 0.14;
+            let (dx, dy) = (ang.cos() * dir, ang.sin());
+            let c = rb(Band::Text, r as f32 * 9.0, 0.0);
+            let mut d = len * 0.45;
+            while d < len {
+                app.layer.set((cx + dx * d).round() as i32, (dy * d).round() as i32, c);
+                d += 2.0;
+            }
         }
     }
 
@@ -616,24 +738,22 @@ impl Interlude for Corner {
             self.hit = true;
             self.bounce_i += 1;
             app.set_title("鸭鸭.exe — 正中角落！！！");
-            // 角落里先炸一朵，朝屏幕里面喷
-            let px = if self.plan.cx > 0.5 { app.w() - 1.0 } else { 0.0 };
-            let py = if self.plan.cy > 0.5 { self.area_h as f32 - 1.0 } else { 0.0 };
-            let a = (app.scr.h as f32 * 0.5 - py).atan2((app.w() * 0.5 - px) * 0.5);
-            let (n, cap) = if app.hi { (70, 420) } else { (30, 160) };
-            let spd = app.scr.h as f32 * 0.85;
-            self.burst(px, py, n, a - 0.75, a + 0.75, spd, &mut app.rng, cap);
-        }
-        // 烟花：从观众席升空
-        if self.hit && t >= self.next_rocket && t < T_HIT + 2.5 {
-            self.next_rocket += if app.hi { 0.2 } else { 0.35 };
-            let w = app.w();
-            // 升空约 0.6 秒，在场地上半部炸开
-            let dh = self.area_h as f32 * app.rng.range(0.4, 0.8);
-            let rise = app.rng.range(0.5, 0.75);
-            let x = w * app.rng.range(0.08, 0.92);
-            let (vy, g) = (-2.0 * dh / rise, 2.0 * dh / (rise * rise));
-            self.sparks.push(Spark { x, y: self.area_h as f32, vx: app.rng.range(-4.0, 4.0), vy, age: 0.0, life: 9.0, hue: 0, rocket: true, g });
+            // 角落里先喷一大朵，朝屏幕里面
+            let (w, hp) = (app.w(), app.hp());
+            let px = if self.plan.cx > 0.5 { w - 1.0 } else { 0.0 };
+            let a = (hp * 0.5).atan2(w * 0.5 - px);
+            let n = if app.hi { 120 } else { 60 };
+            let cap = Self::cap(app);
+            self.burst(px, 0.0, n, a - 0.8, a + 0.8, w.min(hp) * 0.7, &mut app.rng, cap);
+            // 三波烟花从屏幕下方升空，一波比一波大，最后正中间一朵最大
+            let r = &mut app.rng;
+            for (at, n, size) in [(0.05, 3, 1.0), (0.8, 4, 1.15), (1.55, 4, 1.3)] {
+                for i in 0..n {
+                    let xf = (i as f32 + r.range(0.25, 0.75)) / n as f32 * 0.84 + 0.08;
+                    self.launches.push((T_HIT + at + i as f32 * 0.1 + r.range(0.0, 0.06), xf, r.range(0.22, 0.45), size));
+                }
+            }
+            self.launches.push((T_HIT + 1.75, 0.5, 0.3, 1.9));
         }
         self.update_sparks(app, dt);
         self.update_audience(app, dt);
@@ -689,14 +809,27 @@ impl Interlude for Corner {
             self.draw_audience(app);
             return;
         }
-        // 角上的计数（被标志压住也无所谓）
-        if t >= T0 {
+        let a = t - T_HIT;
+        if self.hit && a < 0.15 {
+            // 撞击瞬间全屏白闪（白 → 灰两档），之后放射线
+            let c = if a < 0.07 || !app.hi { [255, 255, 250] } else { [120, 120, 125] };
+            let (w, h) = (app.scr.w as i32, app.scr.h as i32);
+            fill(app, 0, 0, w - 1, h - 1, c);
+        }
+        // 角上的计数：高潮时收起来，别压在鸭鸭身上
+        if t >= T0 && !self.hit {
             let s = format!("反弹 ×{}", self.bounce_i);
             let x = app.scr.w as i32 - str_w(&s) as i32 - 2;
             app.scr.text(x, 0, &s, [105, 105, 115], None);
-            self.draw_logo(app);
+        }
+        if self.hit {
+            self.draw_rays(app, a);
         }
         self.draw_sparks(app);
+        self.big_bottom = if self.hit && a > 0.12 && a < 2.5 { self.draw_big(app, a - 0.12) } else { None };
+        if t >= T0 {
+            self.draw_logo(app);
+        }
         self.draw_audience(app);
     }
 
@@ -726,11 +859,15 @@ impl Interlude for Corner {
             return;
         }
         let a = t - T_HIT;
-        if a < 2.5 {
+        if a > 0.12 && a < 2.5 {
             // 横幅：彩虹字（调色板色，流动不花带宽）
             let text = "正 中 角 落 ！";
             let tw = str_w(text) as i32;
-            let (x0, y0) = ((w - tw) / 2, (h / 2 - 3).max(1));
+            let y0 = match self.big_bottom {
+                Some(b) => (b + 2).min(h - 3),
+                None => (h / 2 - 3).max(1),
+            };
+            let x0 = (w - tw) / 2;
             for x in x0 - 3..x0 + tw + 3 {
                 let c = rb(Band::Text, x as f32 * 2.0, 0.0);
                 app.scr.put_c(x, y0 - 1, '━', c, Some(Col::T(BLACK)));
