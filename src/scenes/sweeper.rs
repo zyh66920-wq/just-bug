@@ -7,12 +7,15 @@
 //! 棋盘静态，只有变化的格子会写到终端。
 use super::*;
 
-const COVER_A: Rgb = [52, 55, 80];
-const COVER_B: Rgb = [43, 45, 66];
-const OPEN_BG: Rgb = [15, 15, 24];
+const COVER_A: Rgb = [98, 102, 136];
+const COVER_B: Rgb = [84, 88, 120];
+const COVER_HI: Rgb = [150, 154, 196]; // 盖着的块顶上 1 像素高光（4×2 格才有）
+const OPEN_BG: Rgb = [13, 13, 20];
+const FRAG: Rgb = [30, 30, 40]; // 翻开处底下的日志碎片：压到极暗，读作「空地」
+const FLAG_FG: Rgb = [255, 222, 70];
 const WIN_BG: Rgb = [11, 11, 18];
 const WIN_FG: Rgb = [140, 142, 178];
-const FLASH: Rgb = [92, 94, 146];
+const FLASH: Rgb = [170, 172, 230];
 const EXPOSED: Rgb = [74, 58, 96];
 const NEVER: f32 = f32::INFINITY;
 const BUG_CH: char = 'ж';
@@ -538,11 +541,22 @@ impl Sweeper {
         let (cw, s) = (self.cw(), self.s);
         let (x0, y0) = (bx + i * cw, by + j * s);
         let cover = if (i + j) % 2 == 0 { COVER_A } else { COVER_B };
-        let (gx, gy) = (x0 + cw / 2 - 1, y0 + (s - 1) / 2);
-        let block = |app: &mut App, bg: Rgb| {
+        // 标记 / 数字：占 2 列的全角字（小格正好填满，大格居中），放在格子最下一行
+        let (gx, gy) = (x0 + cw / 2 - 1, y0 + s - 1);
+        let fill = |app: &mut App, bg: Rgb| {
             for y in 0..s {
                 for x in 0..cw {
                     app.scr.put(x0 + x, y0 + y, ' ', bg, Some(bg));
+                }
+            }
+        };
+        // 盖着的块：实心中灰双色棋盘；大格顶行是半格高光，像一块凸起的砖
+        let block = |app: &mut App, bg: Rgb| {
+            fill(app, bg);
+            if s >= 2 {
+                let hi = mix(bg, COVER_HI, 0.75);
+                for x in 0..cw {
+                    app.scr.put(x0 + x, y0, '▀', hi, Some(bg));
                 }
             }
         };
@@ -551,12 +565,14 @@ impl Sweeper {
                 // bug 搬走了 / 被踩中的那格（上面长花）：空格子
                 self.draw_open(app, c, x0, y0, OPEN_BG);
             } else if t >= self.moth_t[c] - 0.4 {
-                block(app, EXPOSED);
-                app.scr.put(gx, gy, BUG_CH, [235, 235, 240], Some(EXPOSED));
+                fill(app, EXPOSED);
+                app.scr.put(gx, gy, BUG_CH, [245, 245, 250], Some(EXPOSED));
+                app.scr.put(gx + 1, gy, ' ', EXPOSED, Some(EXPOSED));
             } else if t >= self.flag_t[c] {
                 let bg = if t - self.flag_t[c] < 0.12 { FLASH } else { cover };
                 block(app, bg);
-                app.scr.put(gx, gy, BUG_CH, [238, 238, 245], Some(bg));
+                app.scr.put(gx, gy, BUG_CH, FLAG_FG, Some(bg));
+                app.scr.put(gx + 1, gy, BUG_CH, FLAG_FG, Some(bg));
             } else {
                 block(app, cover);
             }
@@ -569,43 +585,39 @@ impl Sweeper {
         }
         let bg = if t - ot < 0.1 { FLASH } else { OPEN_BG };
         if self.num[c] > 0 {
-            block(app, bg);
-            let d = (b'0' + self.num[c]) as char;
-            app.scr.put_c(gx, gy, d, rb(Band::Text, gx as f32, gy as f32 * 1.5), Some(Col::T(bg)));
+            fill(app, bg);
+            let d = char::from_u32(0xFF10 + self.num[c] as u32).unwrap_or('?');
+            app.scr.put_c(gx, gy, d, rb(Band::Duck, gx as f32, gy as f32 * 1.5), Some(Col::T(bg)));
         } else {
             self.draw_open(app, c, x0, y0, bg);
         }
     }
 
-    /// 翻开的空格：露出底下被窗口盖住的日志碎片（暗彩虹，调色板色，流动免费）
+    /// 翻开的空格：底下被窗口盖住的日志只留极暗的残影（静态真彩色，零成本），读作干净的空地
     fn draw_open(&self, app: &mut App, c: usize, x0: i32, y0: i32, bg: Rgb) {
         let (cw, s) = (self.cw(), self.s);
         let rw = self.bw * cw;
         let (i, j) = ((c % self.bw as usize) as i32, (c / self.bw as usize) as i32);
+        let fg = if bg == OPEN_BG { FRAG } else { mix(bg, BLACK, 0.3) };
         for y in 0..s {
             let mut x = 0;
             while x < cw {
                 let (ux, uy) = (i * cw + x, j * s + y);
                 let cell = self.under.as_ref().and_then(|u| u.get((uy * rw + ux) as usize).copied());
                 let mut ch = ' ';
-                let mut fg = Col::T(bg);
                 let mut wide = false;
                 if let Some(cl) = cell {
                     match cl.w {
-                        // 碎片里的数字换成点，免得和真正的提示数字混淆
-                        0 => {
-                            ch = if cl.ch.is_ascii_digit() { '·' } else { cl.ch };
-                            fg = cl.fg;
-                        }
+                        // 碎片里的数字去掉，免得和真正的提示数字混淆
+                        0 if !cl.ch.is_ascii_digit() => ch = cl.ch,
                         1 if x + 1 < cw => {
                             ch = cl.ch;
-                            fg = cl.fg;
                             wide = true;
                         }
                         _ => {}
                     }
                 }
-                app.scr.put_c(x0 + x, y0 + y, ch, fg, Some(Col::T(bg)));
+                app.scr.put(x0 + x, y0 + y, ch, fg, Some(bg));
                 x += if wide { 2 } else { 1 };
             }
         }
