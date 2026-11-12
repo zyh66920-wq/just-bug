@@ -128,7 +128,7 @@ python tools\sheet.py preview\s.json preview\s.png 0.4 2
 .\target\release\just-bug.exe --dump bench --size 320x90 --seed 2 --secs 900
 ```
 
-要求零 panic，240x63 整体平均 ≤ 2 MB/s。上一次的完整记录见 [T3_ACCEPTANCE.md](T3_ACCEPTANCE.md)。
+要求零 panic，240x63 整体平均 ≤ 2 MB/s。上一次的完整记录在内部验收文档中，不随仓库发布。
 
 ## 两个人在同一台电脑上提交
 
