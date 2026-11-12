@@ -2,6 +2,9 @@
 name = "just-bug"
 version = "0.2.0"
 edition = "2024"
+description = "一个毫无用处的终端屏保。it's just bug."
+license = "MIT"
+repository = "https://github.com/zyh66920-wq/just-bug"
 
 [dependencies]
 
