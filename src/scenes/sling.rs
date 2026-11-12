@@ -149,6 +149,7 @@ pub struct Sling {
     hit2: (f32, f32),
     rad2: f32,
     blks: Vec<Blk>,
+    tiers: Vec<(i32, i32, i32, i32, f32, Rgb)>,
     occ: Vec<i32>,
     heap: Vec<u8>,
     ps: Vec<Pc>,
@@ -161,6 +162,7 @@ pub struct Sling {
     score: u32,
     disp: f32,
     snap: Vec<Cell>,
+    back: Vec<(i32, i32, char, Col)>,
     snap_w: usize,
     snap_h: usize,
     rise: Option<Vec<Cell>>,
@@ -239,6 +241,7 @@ impl Sling {
             hit2: (0.0, 0.0),
             rad2: 3.0,
             blks: Vec::new(),
+            tiers: Vec::new(),
             occ: Vec::new(),
             heap: Vec::new(),
             ps: Vec::new(),
@@ -250,6 +253,7 @@ impl Sling {
             fixed: String::new(),
             score: 0,
             disp: 0.0,
+            back: Vec::new(),
             snap_w: app.scr.w,
             snap_h: app.scr.h,
             snap,
@@ -264,15 +268,16 @@ impl Sling {
         let (w, h) = (app.scr.w as i32, app.scr.h as i32);
         self.sw = app.scr.w;
         self.sh = app.scr.h;
-        self.cap = if app.hi { 240 } else { 110 };
         let gy = (h - 2).max(4);
         self.gy = gy;
         let k = if h >= 30 && w >= 100 { 2 } else { 1 };
         self.k = k;
+        let big = k == 2 && h >= 50;
+        self.cap = if !app.hi { 110 } else if big { 380 } else { 240 };
         let kf = k as f32;
         let hp = (2 * gy) as f32;
         // ── 弹弓
-        let sx = ((w as f32 * 0.14) as i32).max(8);
+        let sx = ((w as f32 * if big { 0.16 } else { 0.14 }) as i32).max(8);
         self.stem = sx;
         let yj = (2 * gy - 1 - 6 * k) as f32;
         self.tipl = ((sx - 4 * k) as f32, yj - 5.0 * kf);
@@ -283,16 +288,27 @@ impl Sling {
         self.gpx = hp * 1.9;
         self.gb = hp * 1.1;
         // ── 城堡
-        let cw = ((w as f32 * 0.3) as i32).clamp(14, 56);
-        let cx1 = w - 3;
-        let cx0 = cx1 - cw + 1;
+        let (cx0, cx1) = if big {
+            ((w as f32 * 0.46) as i32, w - 4)
+        } else {
+            let cw = ((w as f32 * 0.3) as i32).clamp(14, 56);
+            (w - 3 - cw + 1, w - 3)
+        };
+        let cw = cx1 - cx0 + 1;
         self.cx0 = cx0;
         self.cx1 = cx1;
         let avail = gy - 4;
-        let nl = if avail >= 34 { 4 } else if avail >= 14 { 3 } else { 2 };
-        let lh = (((avail as f32 * 0.75) / nl as f32 - 1.0) as i32).clamp(2, 7);
+        let (nl, lh) = if big {
+            let nl = if h >= 80 { 4 } else { 3 };
+            let target = (h as f32 * 0.4) as i32;
+            (nl, (target / nl - 1).clamp(3, 8))
+        } else {
+            let nl = if avail >= 34 { 4 } else if avail >= 14 { 3 } else { 2 };
+            (nl, (((avail as f32 * 0.75) / nl as f32 - 1.0) as i32).clamp(2, 7))
+        };
         let step = (cw / (2 * nl + 1)).max(2);
         self.blks.clear();
+        self.tiers.clear();
         let mut perch_spots: Vec<(f32, f32, i32, i32)> = Vec::new(); // (px, py, x 列, 下面那一行)
         let mut beam_i = self.rng.i(BEAMS.len());
         let mut col_i = self.rng.i(COLS.len());
@@ -325,44 +341,57 @@ impl Sling {
                 }
                 self.blks.push(Blk { cells, x, y: r + 1, st: 0, fx: 0.0, fy: 0.0, vx: 0.0, vy: 0.0, wait: 0.0, tin: tb + j as f32 * 0.05 });
             }
-            // 梁：一整行烂日志，切成几段
-            let mut txt = String::new();
-            if w < 70 {
-                while (txt.chars().count() as i32) < wd {
-                    txt.push_str(BEAMS_SM[beam_i % BEAMS_SM.len()]);
-                    beam_i += 1;
+            if big {
+                let bg = [[38, 28, 46], [46, 32, 30], [28, 38, 48]][(i % 3) as usize];
+                self.tiers.push((x0, x1, r, b, tb, bg));
+            }
+            // 梁：大屏把每层填满日志字，小屏只留一层梁
+            let nseg = (wd / if big { 14 } else { 11 }).max(1);
+            let nrow = if big { lh } else { 1 };
+            for drow in 0..nrow {
+                let mut txt = String::new();
+                if w < 70 {
+                    while (txt.chars().count() as i32) < wd {
+                        txt.push_str(BEAMS_SM[beam_i % BEAMS_SM.len()]);
+                        beam_i += 1;
+                    }
+                } else {
+                    while (txt.chars().count() as i32) < wd {
+                        txt.push_str(BEAMS[beam_i % BEAMS.len()]);
+                        txt.push_str("  ");
+                        beam_i += 1;
+                    }
                 }
-            } else {
-                while (txt.chars().count() as i32) < wd {
-                    txt.push_str(BEAMS[beam_i % BEAMS.len()]);
-                    txt.push_str("  ");
-                    beam_i += 1;
+                let chars: Vec<char> = txt.chars().take(wd as usize).collect();
+                let kind = if chars.starts_with(&['E', 'R', 'R']) { 1 } else if chars.starts_with(&['W', 'A', 'R', 'N']) { 2 } else { 0 };
+                let rr = r + drow;
+                for sg in 0..nseg {
+                    let a = sg * wd / nseg;
+                    let e = (sg + 1) * wd / nseg;
+                    let mut cells = Vec::new();
+                    for c in a..e {
+                        let x = x0 + c;
+                        let col: Col = match kind {
+                            1 => RED.into(),
+                            2 => [255, 190, 80].into(),
+                            _ => rb(Band::Text, x as f32, rr as f32),
+                        };
+                        cells.push((c - a, 0, chars[c as usize], col));
+                    }
+                    self.blks.push(Blk { cells, x: x0 + a, y: rr, st: 0, fx: 0.0, fy: 0.0, vx: 0.0, vy: 0.0, wait: 0.0, tin: tb + 0.2 + drow as f32 * 0.02 + sg as f32 * 0.04 });
                 }
             }
-            let chars: Vec<char> = txt.chars().take(wd as usize).collect();
-            let kind = if chars.starts_with(&['E', 'R', 'R']) { 1 } else if chars.starts_with(&['W', 'A', 'R', 'N']) { 2 } else { 0 };
-            let nseg = (wd / 11).max(1);
-            for sg in 0..nseg {
-                let a = sg * wd / nseg;
-                let e = (sg + 1) * wd / nseg;
-                let mut cells = Vec::new();
-                for c in a..e {
-                    let x = x0 + c;
-                    let col: Col = match kind {
-                        1 => RED.into(),
-                        2 => [255, 190, 80].into(),
-                        _ => rb(Band::Text, x as f32, r as f32),
-                    };
-                    cells.push((c - a, 0, chars[c as usize], col));
+            // 蹲在这一层上面（大屏沿层顶分散）
+            if big {
+                for q in 1..4 {
+                    let x = x0 + wd * q / 4;
+                    perch_spots.push((x as f32, (2 * r - 2) as f32, x, r));
                 }
-                self.blks.push(Blk { cells, x: x0 + a, y: r, st: 0, fx: 0.0, fy: 0.0, vx: 0.0, vy: 0.0, wait: 0.0, tin: tb + 0.2 + sg as f32 * 0.05 });
-            }
-            // 蹲在这一层里面（两根柱子之间的地板上）
-            if cxs.len() >= 2 && cxs[1] - cxs[0] >= 6 {
+            } else if cxs.len() >= 2 && cxs[1] - cxs[0] >= 6 {
                 let x = (cxs[0] + cxs[1]) / 2;
                 perch_spots.push((x as f32, (2 * (b + 1) - 2) as f32, x, b + 1));
             }
-            if wd >= 30 && cxs.len() >= 3 {
+            if !big && wd >= 30 && cxs.len() >= 3 {
                 let x = (cxs[cxs.len() - 2] + cxs[cxs.len() - 1]) / 2;
                 perch_spots.push((x as f32, (2 * (b + 1) - 2) as f32, x, b + 1));
             }
@@ -392,7 +421,7 @@ impl Sling {
         self.tg1 = (x1_top as f32 - 2.0 - 3.0 * kf, (2 * r_top) as f32 - 2.0 * kf);
         let mid = b_0 - lh / 2;
         self.hit2 = (x0_0 as f32 + 1.0, mid as f32);
-        self.rad2 = lh as f32 * 0.8 + 1.5;
+        self.rad2 = if big { lh as f32 * 1.3 + 2.0 } else { lh as f32 * 0.8 + 1.5 };
         self.tg2 = (x0_0 as f32 - 4.0 * kf, (2 * mid) as f32);
         self.land = (x0_0 as f32 - 9.0 * kf, (2 * gy - 1) as f32 - 3.5 * kf - 1.0);
         // ── 飞蛾
@@ -423,6 +452,23 @@ impl Sling {
                 sx: 0.0,
                 sy: 0.0,
             });
+        }
+        self.back.clear();
+        if big && self.snap_w == app.scr.w && self.snap_h == app.scr.h && self.snap.len() == self.snap_w * self.snap_h {
+            let (sw, gyu) = (self.snap_w, gy.max(1) as usize);
+            for r in (2..gyu).step_by(2) {
+                for x in (0..sw).step_by(2) {
+                    let cell = self.snap[r * sw + x];
+                    if cell.ch == ' ' {
+                        continue;
+                    }
+                    let c: Rgb = match cell.fg {
+                        Col::P(i) => pal_rgb(i as u8, app.pal_t()),
+                        Col::T(c) => c,
+                    };
+                    self.back.push((x as i32, r as i32, cell.ch, Col::T(scale(c, 0.28))));
+                }
+            }
         }
         self.heap = vec![0; w.max(1) as usize];
         self.ps.clear();
@@ -908,12 +954,12 @@ impl Interlude for Sling {
             self.ev = 1;
             let (ix, iy) = self.hit1;
             let before: Vec<bool> = self.moths.iter().map(|m| m.mode == 1).collect();
-            self.hit(ix, iy, 2.3, 9.0, false);
+            self.hit(ix, iy, 2.3 * self.k as f32, 9.0 * self.k as f32, false);
             // 被波及的飞蛾惊飞一下，然后回来笑
             let ipx = (ix, iy * 2.0);
             for i in 0..self.moths.len() {
                 let m = &self.moths[i];
-                let near = (m.x - ipx.0).abs() < 12.0 && (m.y - ipx.1).abs() < 10.0;
+                let near = (m.x - ipx.0).abs() < 12.0 * self.k as f32 && (m.y - ipx.1).abs() < 10.0 * self.k as f32;
                 if near || (before[i] && m.perch >= 0 && self.blks[m.perch as usize].st != 0) {
                     let (a, b) = (self.rng.r(-10.0, 40.0), self.rng.r(-60.0, -35.0));
                     let m = &mut self.moths[i];
@@ -934,7 +980,7 @@ impl Interlude for Sling {
             self.ev = 2;
             let (ix, iy) = self.hit2;
             let r = self.rad2;
-            self.hit(ix, iy, r, 16.0, true);
+            self.hit(ix, iy, r, 16.0 * self.k as f32, true);
             self.flee_all();
             app.set_title("鸭鸭.exe — 弹弓 · 第 2 发：正中！");
         }
@@ -1005,6 +1051,10 @@ impl Interlude for Sling {
         let h = app.scr.h as i32;
         let k = self.k;
         let kf = k as f32;
+        // ── 远处淡日志，填掉大片纯黑
+        for &(x, y, ch, c) in &self.back {
+            app.scr.put_c(x, y, ch, c, None);
+        }
         // ── 地面：日志最底下两行留着；上面的整页沉下去
         let snap = std::mem::take(&mut self.snap);
         self.draw_rows(app, &snap, gy as usize, self.snap_h, 0, h, false);
@@ -1015,6 +1065,19 @@ impl Interlude for Sling {
         }
         self.snap = snap;
 
+        // ── 塔的暗色层底（第二次命中后随碎块一起消失）
+        if self.ev < 2 {
+            for &(x0, x1, y0, y1, t0, bg) in &self.tiers {
+                if t < t0 {
+                    continue;
+                }
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        app.scr.put(x, y, ' ', BLACK, Some(bg));
+                    }
+                }
+            }
+        }
         // ── 碎块（被叼着的在 draw_over 画）
         for p in &self.ps {
             if p.trip >= 0 {

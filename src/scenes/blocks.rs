@@ -93,6 +93,8 @@ pub struct Blocks {
     fw: i32,
     fh: i32,
     x0: i32,
+    cw: i32,
+    ch: i32,
     jh: i32,
     rows: Vec<Row>,
     next_id: u32,
@@ -206,13 +208,20 @@ impl Blocks {
         let small = w < 100 || h < 30;
         let (hw, hh) = app.duck_half();
         let dz = if small { 12 } else { (hw * 2.0) as i32 + 8 };
-        let fw = ((w - dz) / 2).max(4);
-        let x0 = ((w - dz - fw * 2) / 2).max(0);
-        let fh = (h - FY0).max(4);
+        let big = w >= 150 && h >= 40;
+        let (cw, ch) = if big { (4, 2) } else { (2, 1) };
+        let (fw, x0) = if big {
+            let fw = 14;
+            (fw, ((w - (fw * cw + 24 + 38)) / 2).max(8))
+        } else {
+            let fw = ((w - dz) / cw).max(4);
+            (fw, ((w - dz - fw * cw) / 2).max(0))
+        };
+        let fh = ((h - FY0) / ch).max(4);
         let mut rng = Rng(app.rng.next() | 1);
 
-        // 车道：每条大约 16 格宽，几块同时落
-        let lw = if small { 7 } else { 9 };
+        // 车道：大屏每条约 5 格宽，几块同时落
+        let lw = if big { 5 } else if small { 7 } else { 9 };
         let mut nl = (fw / lw).max(1);
         if !app.hi {
             nl = nl.min(4);
@@ -238,8 +247,14 @@ impl Blocks {
         for r in (fh - jh)..fh {
             for cc in 0..fw {
                 if r >= fh - jh + depth[cc as usize] {
-                    let shade = (((cc / 3) as u32 ^ (r / 2) as u32).wrapping_mul(2654435761) >> 7) % 3;
-                    rows[r as usize].c[cc as usize] = 1 + shade as u8 * 4 + rng.int(4) as u8;
+                    if big {
+                        let shade = (((cc / 6) as u32 ^ (r / 4) as u32).wrapping_mul(2654435761) >> 7) % 3;
+                        let g = (((cc as u32 / 2) ^ r as u32) % 4) as u8;
+                        rows[r as usize].c[cc as usize] = 1 + shade as u8 * 4 + g;
+                    } else {
+                        let shade = (((cc / 3) as u32 ^ (r / 2) as u32).wrapping_mul(2654435761) >> 7) % 3;
+                        rows[r as usize].c[cc as usize] = 1 + shade as u8 * 4 + rng.int(4) as u8;
+                    }
                 }
             }
         }
@@ -265,6 +280,8 @@ impl Blocks {
 
         let duck_at = if small {
             ((w - dz / 2) as f32, (hp * 0.45).max(6.0))
+        } else if big {
+            ((x0 + fw * cw + 24) as f32, (hp * 0.4).max(hh + 10.0))
         } else {
             ((w - dz / 2) as f32, (hp * 0.4).max(hh + 10.0))
         };
@@ -289,6 +306,8 @@ impl Blocks {
             fw,
             fh,
             x0,
+            cw,
+            ch,
             jh,
             rows,
             next_id: fh as u32,
@@ -508,7 +527,7 @@ impl Blocks {
             let row = &self.rows[r as usize];
             if row.c.iter().all(|&v| v != 0) && !self.clears.iter().any(|c| c.id == row.id) {
                 let id = row.id;
-                let text = self.line_text(self.fw * 2);
+                let text = self.line_text(self.fw * self.cw);
                 self.clears.push(Clear { id, t0: self.t, text });
             }
         }
@@ -567,11 +586,11 @@ impl Blocks {
         let fh = self.fh as f32;
         self.bits.clear();
         for &(c, r) in &cells {
-            let (sx, sy) = (self.x0 + c * 2, FY0 + r);
-            for k in 0..2 {
+            let (sx, sy) = (self.x0 + c * self.cw, FY0 + r * self.ch);
+            for k in 0..(self.cw * self.ch) {
                 let i = ((sx + k) as usize + r as usize * 7) % BOOM_TXT.len();
                 let die = 0.95 + (r as f32 / fh) * 0.9 + self.rng.f() * 0.3;
-                self.bits.push(Bit { x: sx + k, y: sy, ch: BOOM_TXT[i] as char, die });
+                self.bits.push(Bit { x: sx + k % self.cw, y: sy + k / self.cw, ch: BOOM_TXT[i] as char, die });
             }
         }
         for row in self.rows.iter_mut() {
@@ -588,8 +607,8 @@ impl Blocks {
             }
             let (c, r) = cells[self.rng.int(cells.len())];
             self.flies.push(Fly {
-                x: (self.x0 + c * 2) as f32,
-                y: ((FY0 + r) * 2) as f32,
+                x: (self.x0 + c * self.cw) as f32,
+                y: ((FY0 + r * self.ch) * 2) as f32,
                 vx: self.rng.range(-20.0, 20.0),
                 vy: self.rng.range(-40.0, -15.0),
                 shade: [0u8, 2, 3, 4][self.rng.int(4)],
@@ -625,7 +644,7 @@ impl Interlude for Blocks {
                 let id = self.next_id;
                 self.next_id += 1;
                 self.rows.insert(0, Row { c: vec![0; self.fw as usize], id });
-                self.lines.push(FlyLine { y0: (FY0 + idx as i32) as f32, t0: t, text: cl.text });
+                self.lines.push(FlyLine { y0: (FY0 + idx as i32 * self.ch) as f32, t0: t, text: cl.text });
                 self.n += 1;
                 self.recompute();
                 let falls = std::mem::take(&mut self.falls);
@@ -801,18 +820,23 @@ impl Interlude for Blocks {
             if t < 1.3 && ((fh - r) as f32) > rv {
                 continue;
             }
-            let sy = FY0 + r;
+            let sy = FY0 + r * self.ch;
             let row = &self.rows[r as usize];
             if let Some(cl) = self.clears.iter().find(|c| c.id == row.id) {
                 if t - cl.t0 < 0.1 {
-                    for x in x0..x0 + fw * 2 {
-                        app.scr.put(x, sy, ' ', WHITE, Some(WHITE));
+                    for y in sy..sy + self.ch {
+                        for x in x0..x0 + fw * self.cw {
+                            app.scr.put(x, y, ' ', WHITE, Some(WHITE));
+                        }
                     }
                 } else {
                     let text = cl.text.clone();
-                    let e = rtext(app, x0, sy, &text, x0 + fw * 2);
-                    for x in e..x0 + fw * 2 {
-                        app.scr.put(x, sy, ' ', WHITE, Some(BLACK));
+                    let e = rtext(app, x0, sy, &text, x0 + fw * self.cw);
+                    for y in sy..sy + self.ch {
+                        let x0b = if y == sy { e } else { x0 };
+                        for x in x0b..x0 + fw * self.cw {
+                            app.scr.put(x, y, ' ', WHITE, Some(BLACK));
+                        }
                     }
                 }
                 continue;
@@ -820,7 +844,7 @@ impl Interlude for Blocks {
             for c in 0..fw {
                 let v = row.c[c as usize];
                 if v != 0 {
-                    put_cell(app, x0 + c * 2, sy, v);
+                    put_cell(app, x0 + c * self.cw, sy, v, self.cw, self.ch);
                 }
             }
         }
@@ -831,10 +855,13 @@ impl Interlude for Blocks {
                 if r < 0 || r >= self.fh {
                     continue;
                 }
-                let sx = x0 + (f.tx + cx) * 2;
-                let sy = FY0 + r;
-                app.scr.put(sx, sy, '·', [86, 86, 104], None);
-                app.scr.put(sx + 1, sy, '·', [86, 86, 104], None);
+                let sx = x0 + (f.tx + cx) * self.cw;
+                let sy = FY0 + r * self.ch;
+                for dy in 0..self.ch {
+                    for dx in 0..self.cw {
+                        app.scr.put(sx + dx, sy + dy, ' ', WHITE, Some([38, 38, 50]));
+                    }
+                }
             }
         }
         // 正在落的块
@@ -842,7 +869,7 @@ impl Interlude for Blocks {
             for (k, &(cx, cy)) in f.rots[f.r].iter().enumerate() {
                 let r = f.iy + cy;
                 if r >= 0 {
-                    put_cell(app, x0 + (f.x + cx) * 2, FY0 + r, 1 + f.shade * 4 + f.glyph[k]);
+                    put_cell(app, x0 + (f.x + cx) * self.cw, FY0 + r * self.ch, 1 + f.shade * 4 + f.glyph[k], self.cw, self.ch);
                 }
             }
         }
@@ -855,15 +882,17 @@ impl Interlude for Blocks {
                 if row < 0 {
                     continue;
                 }
-                let (sx, sy) = (x0 + c * 2, FY0 + row);
-                for k in 0..2 {
-                    let bg = match kind {
-                        0 => rb(Band::Duck, (sx + k) as f32, sy as f32),
-                        1 => Col::T([16, 14, 24]),
-                        2 => Col::T(ORANGE),
-                        _ => rb(Band::Duck, (sx + k) as f32, sy as f32),
-                    };
-                    app.scr.put_c(sx + k, sy, ' ', Col::T(BLACK), Some(bg));
+                let (sx, sy) = (x0 + c * self.cw, FY0 + row * self.ch);
+                for dy in 0..self.ch {
+                    for dx in 0..self.cw {
+                        let bg = match kind {
+                            0 => rb(Band::Duck, (sx + dx) as f32, (sy + dy) as f32),
+                            1 => Col::T([16, 14, 24]),
+                            2 => Col::T(ORANGE),
+                            _ => rb(Band::Duck, (sx + dx) as f32, (sy + dy) as f32),
+                        };
+                        app.scr.put_c(sx + dx, sy + dy, ' ', Col::T(BLACK), Some(bg));
+                    }
                 }
             }
         }
@@ -915,7 +944,7 @@ impl Interlude for Blocks {
                 continue;
             }
             let text = self.lines[i].text.clone();
-            rtext(app, x0, y, &text, x0 + fw * 2);
+            rtext(app, x0, y, &text, x0 + fw * self.cw);
         }
         // 顶上的小标签
         if self.ph != Ph::Out {
@@ -930,7 +959,7 @@ impl Interlude for Blocks {
             } else {
                 format!(" 鸭子.exe — 整理 bug · 已整理日志 {} 行", self.n)
             };
-            let x = (x0 + (fw * 2 - str_w(&s) as i32) / 2).max(0);
+            let x = (x0 + (fw * self.cw - str_w(&s) as i32) / 2).max(0);
             app.scr.text(x, 0, &s, [235, 235, 240], Some([28, 26, 40]));
         }
         if self.small {
@@ -950,10 +979,26 @@ impl Interlude for Blocks {
     }
 }
 
-fn put_cell(app: &mut App, x: i32, y: i32, v: u8) {
+fn put_cell(app: &mut App, x: i32, y: i32, v: u8, cw: i32, ch: i32) {
     let k = (v - 1) as usize;
     let (bg, fg) = SHADES[(k / 4).min(2)];
     let (a, b) = GLYPH[k % 4];
-    app.scr.put(x, y, a, fg, Some(bg));
-    app.scr.put(x + 1, y, b, fg, Some(bg));
+    if cw == 2 && ch == 1 {
+        app.scr.put(x, y, a, fg, Some(bg));
+        app.scr.put(x + 1, y, b, fg, Some(bg));
+        return;
+    }
+    let face = mix(bg, WHITE, 0.10);
+    let low = scale(bg, 0.84);
+    for dy in 0..ch {
+        let c = if dy == 0 { face } else { low };
+        for dx in 0..cw {
+            app.scr.put(x + dx, y + dy, ' ', BLACK, Some(c));
+        }
+    }
+    let gx = x + (cw - 2) / 2;
+    let gy = y + ch / 2;
+    let gf = scale(bg, 0.55);
+    app.scr.put(gx, gy, a, gf, None);
+    app.scr.put(gx + 1, gy, b, gf, None);
 }
