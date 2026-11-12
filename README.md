@@ -82,4 +82,11 @@ A：能。MIT 协议，随便改，记得保留版权声明。想自己编译、
 
 ---
 
-[MIT](LICENSE) © 2026 Gu_Xun · 鸭鸭不会写代码，但跟它讲一遍，你就能自己 debug。
+## 谁做的
+
+- **创意与灵感**：[Mint](https://github.com/zyh66920-wq)。鸭鸭、Bug，还有它们之间那点事，都是她想出来的。
+- **代码协作**：[GuXun](https://github.com/GuXun818)。
+
+---
+
+[MIT](LICENSE) © 2026 Mint · 鸭鸭不会写代码，但跟它讲一遍，你就能自己 debug。

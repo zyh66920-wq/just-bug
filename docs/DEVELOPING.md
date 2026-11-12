@@ -129,6 +129,35 @@ python tools\sheet.py preview\s.json preview\s.png 0.4 2
 
 要求零 panic，240x63 整体平均 ≤ 2 MB/s。上一次的完整记录见 [T3_ACCEPTANCE.md](T3_ACCEPTANCE.md)。
 
+## 两个人在同一台电脑上提交
+
+Mint 和 GuXun 共用一台电脑时，各用一个工作目录，各自的提交署各自的名字：
+
+| 谁 | 工作目录 | 提交身份 |
+|---|---|---|
+| GuXun | 现有仓库目录 | 本机全局 git 配置 |
+| Mint | 单独克隆一份（例如 `E:\Mint\just-bug`） | 只在她的目录里设置，见下 |
+
+在 Mint 的目录里设一次身份（只影响这个目录）：
+
+```powershell
+git config user.name "Mint"
+git config user.email "334030412+zyh66920-wq@users.noreply.github.com"
+```
+
+这是 GitHub 给她的 noreply 邮箱，提交会挂到她的账号上，又不暴露真实邮箱。
+
+推送时，`gh` 可以同时登录两个账号，推之前切到要用的那个：
+
+```powershell
+gh auth login                  # 第一次：让 Mint 用浏览器登录她的账号
+gh auth switch -u zyh66920-wq  # 切到 Mint
+gh auth switch -u GuXun818     # 切回 GuXun
+gh auth setup-git              # 让 git 推送用 gh 当前的账号
+```
+
+协作约定：各自在分支上改，开 PR 合进 `master`，不直接推 `master`。
+
 ## 发布清单
 
 1. `build.ps1` 构建 release，把 `target\release\just-bug.exe` 复制到仓库根目录。
