@@ -35,7 +35,7 @@ powershell -NoProfile -File build.ps1
 
 | 参数 | 含义 |
 |---|---|
-| `--dump <文件.json>` | 离线模拟，把指定时刻的画面导出成 JSON，不打开终端 |
+| `--dump <文件>` | 离线模拟并导出指定时刻的画面：`.json` 存 JSON，其它后缀存 HTML，不打开终端 |
 | `--dump bench` | 离线模拟并统计每秒写往终端的字节数和每帧计算耗时 |
 | `--size WxH` | 模拟的终端尺寸（字符），默认 `200x56` |
 | `--at t1,t2,…` | 导出哪些时刻（秒）。配合 `--inter` 时表示插曲开始后第几秒 |
@@ -45,6 +45,7 @@ powershell -NoProfile -File build.ps1
 | `--secs N` | bench 模拟时长（秒），默认 150 |
 | `--fps N` | bench 模拟帧率，默认 60 |
 | `--lite` | 用省流量档（低带宽画法） |
+| `--panic-test` | 隐藏自测：故意 panic，验证终端恢复和 `%TEMP%\just-bug-panic.log` |
 | `--inner` / `--here` | 内部使用：已在全屏终端里，不再重新拉起窗口 |
 
 ## 看画面：导出与拼图
