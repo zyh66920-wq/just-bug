@@ -109,7 +109,7 @@ python tools\sheet.py preview\s.json preview\s.png 0.4 2
    - `draw_over(app)`（可选）：盖在像素层上面的文字。
 3. 在 `mod.rs` 里加 `mod`、把 `COUNT` 加一，并在 `make()` 里接上新编号。
 4. 用上面的命令导出三档尺寸的拼图，跑满效果和省流量两次 bench，达标再合并。
-5. 在 README 的插曲一览里补一行。
+5. README 不列插曲内容（不剧透）。只要把「里面有什么」里的插曲数量改对，并重出 `docs/teaser.png`。
 
 几条硬规矩：
 
@@ -134,7 +134,7 @@ python tools\sheet.py preview\s.json preview\s.png 0.4 2
 1. `build.ps1` 构建 release，把 `target\release\just-bug.exe` 复制到仓库根目录。
 2. 记下 exe 大小和 SHA256，写进发布说明。
 3. 压力测试矩阵通过。
-4. README 的插曲表、`docs/` 下的图和当前版本一致。
+4. README 里的插曲数量、`docs/preview.gif`、`docs/teaser.png` 和当前版本一致。README 只放预览，不剧透主线后半段、插曲结尾和结局。
 5. 在 Windows Terminal 里真机看一轮：调色板流动、自动降档、插曲观感。
 6. exe 没有签名，发布说明里保留 SmartScreen 提示。
 7. 公开仓库前，确认 git 提交邮箱不是私人邮箱。
