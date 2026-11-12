@@ -59,9 +59,11 @@ mod win {
     pub struct Console {
         hin: Handle,
         hout: Handle,
-        min: u32,
-        mout: u32,
     }
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    pub static SAVED_IN: AtomicU32 = AtomicU32::new(0);
+    pub static SAVED_OUT: AtomicU32 = AtomicU32::new(0);
+    pub static SAVED_READY: AtomicBool = AtomicBool::new(false);
     impl Console {
         pub fn open() -> Console {
             unsafe {
@@ -69,9 +71,12 @@ mod win {
                 let (mut min, mut mout) = (0, 0);
                 GetConsoleMode(hin, &mut min);
                 GetConsoleMode(hout, &mut mout);
+                SAVED_IN.store(min, Ordering::Relaxed);
+                SAVED_OUT.store(mout, Ordering::Relaxed);
+                SAVED_READY.store(true, Ordering::Relaxed);
                 SetConsoleMode(hout, mout | 0x1 | 0x4 | 0x8);
                 SetConsoleMode(hin, 0x80);
-                Console { hin, hout, min, mout }
+                Console { hin, hout }
             }
         }
         pub fn size(&self) -> (usize, usize) {
@@ -105,11 +110,14 @@ mod win {
             }
             pressed
         }
-        pub fn restore(&self) {
-            unsafe {
-                SetConsoleMode(self.hin, self.min);
-                SetConsoleMode(self.hout, self.mout);
-            }
+    }
+    pub fn restore_saved() {
+        if !SAVED_READY.load(Ordering::Relaxed) {
+            return;
+        }
+        unsafe {
+            SetConsoleMode(GetStdHandle(STD_INPUT), SAVED_IN.load(Ordering::Relaxed));
+            SetConsoleMode(GetStdHandle(STD_OUTPUT), SAVED_OUT.load(Ordering::Relaxed));
         }
     }
     pub fn now_hms() -> String {
@@ -2380,15 +2388,39 @@ fn relaunch_fullscreen() -> bool {
     false
 }
 
-fn restore(con: &win::Console) {
+fn restore_terminal() {
     let mut o = std::io::stdout();
     let _ = write!(o, "\x1b]104\x07\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l\x1b]0;\x07");
     let _ = o.flush();
-    con.restore();
+    win::restore_saved();
+}
+
+/// 崩溃兜底：先按正常退出的同一条路径恢复终端，再把信息写进 %TEMP%，静默退出。
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        restore_terminal();
+        let msg = format!("just-bug panic\n{}\n{}\n", win::now_hms(), info);
+        let dir = std::env::var_os("TEMP").or_else(|| std::env::var_os("TMP"));
+        if let Some(dir) = dir {
+            let path = std::path::PathBuf::from(dir).join("just-bug-panic.log");
+            let _ = std::fs::write(path, msg);
+        }
+        // panic = "abort"：hook 结束后仍会 abort；这里直接退出，避免终端里多出 abort 提示
+        std::process::exit(1);
+    }));
 }
 
 fn main() -> std::io::Result<()> {
+    install_panic_hook();
     let args: Vec<String> = std::env::args().collect();
+    // 隐藏自测：走到和正式播放相同的终端状态后故意 panic，验证恢复路径与日志
+    if args.iter().any(|a| a == "--panic-test") {
+        let _con = win::Console::open();
+        let mut o = std::io::stdout();
+        let _ = write!(o, "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[48;2;0;0;0m\x1b[2J");
+        let _ = o.flush();
+        panic!("panic hook self-test");
+    }
     if args.iter().any(|a| a == "--dump") {
         dump(&args);
         return Ok(());
@@ -2479,7 +2511,7 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    restore(&con);
+    restore_terminal();
     Ok(())
 }
 
