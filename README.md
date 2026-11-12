@@ -84,7 +84,7 @@ A：能。MIT 协议，随便改，记得保留版权声明。想自己编译、
 
 ## 谁做的
 
-- **创意与灵感**：[Mint](https://github.com/zyh66920-wq)。鸭鸭、Bug，还有它们之间那点事，都是她想出来的。
+- **创意与灵感**：[Mint](https://github.com/zyh66920-wq)。
 - **代码协作**：[GuXun](https://github.com/GuXun818)。
 
 ---
